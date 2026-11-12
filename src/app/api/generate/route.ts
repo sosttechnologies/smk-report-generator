@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { claudeAvailable, describeFailure, generateWithClaude } from '@/lib/generate/claude';
 import { generateFromTemplate } from '@/lib/generate/template';
+import { findResidualRisks, pseudonymise, rehydrate } from '@/lib/pseudonymise';
 import { buildReport } from '@/lib/report';
 import type { ReportSetup, StudentTerm } from '@/lib/types';
 
@@ -36,8 +37,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const content = await generateWithClaude(term);
-    return NextResponse.json({ report: buildReport(term, setup, content, false) });
+    // Names never leave this process. The model writes about "Student A"; the real
+    // names are substituted back here. See src/lib/pseudonymise.ts.
+    const { term: masked, pseudonym } = pseudonymise(term);
+    const content = rehydrate(await generateWithClaude(masked), pseudonym);
+    return NextResponse.json({
+      report: buildReport(term, setup, content, false),
+      residualRisks: findResidualRisks(term),
+    });
   } catch (error) {
     return NextResponse.json({
       report: buildReport(term, setup, fallback, true),

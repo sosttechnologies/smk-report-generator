@@ -43,6 +43,25 @@ The page published as a claude.ai Artifact (`artifact/`) is a **demo only**. It 
 client-side, so it can never hold an API key; it borrows the viewer's own Claude through the
 `sample` runtime capability. Never put a key in it.
 
+## Data protection
+
+`src/lib/pseudonymise.ts` is a hard boundary: **no student or tutor name reaches the model.**
+Before a generation request leaves the server, names are replaced with `Student A` / `Tutor 1`
+tokens (including inside free-text comments and record ids); the model's answer is rehydrated
+here. `npm run check:privacy` asserts no name leaks and fails the run if one does — keep it
+passing.
+
+`findResidualRisks()` flags what the name swap cannot catch — addresses, postcodes, phone
+numbers, family mentions, health and SEND language — for staff to redact before sending.
+
+Three things to keep stating plainly rather than burying:
+- Pseudonymisation is **not** anonymisation. Pseudonymised data is still personal data under
+  UK GDPR; this demonstrates data minimisation, it does not remove any obligation.
+- The SOCIAL, EMOTIONAL AND MENTAL HEALTH and SENSORY/PHYSICAL sections attract **Article 9
+  special category** health data. Tokens do not change that.
+- Free-text scrubbing is imperfect. The only reliable control is what tutors are told to
+  write in the Microsoft Form.
+
 ## Shape of the thing
 
 **Input** — one row per student × subject × week, from a 10-question form:

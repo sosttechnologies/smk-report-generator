@@ -8,7 +8,8 @@
     "start": "next start",
     "sample": "tsx scripts/make-sample-data.ts",
     "check": "tsx scripts/check-pipeline.ts",
-    "preview": "tsx scripts/make-preview.ts"
+    "preview": "tsx scripts/make-preview.ts",
+    "check:privacy": "tsx scripts/check-pseudonymise.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
