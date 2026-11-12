@@ -1,0 +1,222 @@
+/*
+ * Styling for the Interim Termly Report document.
+ *
+ * Deliberately NOT the app chrome: black on white, Calibri (Carlito as the free
+ * metric-compatible fallback), A4 at 96dpi. Matches docs/reference/report-*.png.
+ */
+
+.report-doc {
+  --page-width: 794px;   /* A4 at 96dpi */
+  --page-pad-x: 56px;
+  --page-pad-top: 40px;
+  --page-pad-bottom: 90px; /* room for the repeated footer */
+  font-family: Carlito, Calibri, 'Segoe UI', sans-serif;
+  color: #111;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.report-page {
+  width: var(--page-width);
+  min-height: 1123px; /* A4 at 96dpi */
+  margin: 0 auto 28px;
+  padding: var(--page-pad-top) var(--page-pad-x) var(--page-pad-bottom);
+  background: #fff;
+  box-sizing: border-box;
+  position: relative;
+  box-shadow: 0 20px 50px -24px rgba(42, 33, 27, 0.35);
+}
+
+/* Print: Puppeteer supplies the logo header and letterhead footer on every
+   physical page, so the section box is pure content and may flow onto a second page. */
+.report-page--flow {
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--page-pad-x);
+  box-shadow: none;
+  width: 100%;
+  break-after: page;
+}
+.report-page--flow:last-child {
+  break-after: auto;
+}
+
+.report-logo {
+  width: 150px;
+  height: auto;
+  display: block;
+  margin-bottom: 26px;
+}
+
+.report-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 15px;
+}
+.report-title div + div {
+  margin-top: 10px;
+}
+
+.report-meta {
+  margin: 36px 0 44px;
+  font-weight: 700;
+  font-size: 14px;
+}
+.report-meta div + div {
+  margin-top: 10px;
+}
+
+.report-section-label {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+/* --- page 2: the subject matrix --- */
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  line-height: 1.35;
+  table-layout: fixed;
+}
+.matrix th,
+.matrix td {
+  border: 1px solid #111;
+  padding: 8px 7px;
+  vertical-align: top;
+  text-align: left;
+  word-wrap: break-word;
+}
+.matrix th {
+  font-weight: 700;
+}
+
+/* --- pages 3+: the two-column label/body table --- */
+.detail {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+  table-layout: fixed;
+}
+.detail td {
+  border: 1px solid #111;
+  padding: 10px 12px;
+  vertical-align: top;
+}
+.detail td.detail-label {
+  width: 180px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.detail ul {
+  margin: 4px 0 10px;
+  padding-left: 20px;
+}
+.detail li {
+  margin-bottom: 4px;
+}
+.detail p {
+  margin: 0 0 10px;
+}
+.detail p:last-child,
+.detail ul:last-child {
+  margin-bottom: 0;
+}
+.detail .subject-heading {
+  font-weight: 700;
+  margin: 10px 0 4px;
+}
+.detail .subject-heading:first-child {
+  margin-top: 0;
+}
+
+/* --- attendance roll-up table --- */
+.attendance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 10px;
+}
+.attendance-table th,
+.attendance-table td {
+  border: 1px solid #555;
+  padding: 5px 8px;
+  text-align: left;
+}
+.attendance-table th {
+  font-weight: 700;
+}
+
+/* --- footer, repeated on every page --- */
+.report-footer {
+  position: absolute;
+  left: var(--page-pad-x);
+  right: var(--page-pad-x);
+  bottom: 26px;
+  font-size: 10px;
+  color: #1a1a1a;
+}
+.report-footer-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.report-footer-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.report-footer-legal {
+  text-align: center;
+  margin-top: 6px;
+  color: #2b4a7d;
+}
+.report-footer-icon {
+  color: #c00;
+  font-size: 11px;
+}
+
+/* --- editing affordances: screen only, never printed --- */
+.report-field {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  border: 1px solid #efe6d8;
+  border-radius: 3px;
+  padding: 4px 6px;
+  margin: -5px -7px;
+  background: transparent;
+  resize: none;
+  field-sizing: content;
+  outline: none;
+  box-sizing: content-box;
+}
+.report-field:focus {
+  border-color: #b9a68d;
+  background: #fffcf6;
+}
+.report-field[readonly] {
+  border-color: transparent;
+  background: transparent;
+}
+
+@media print {
+  .report-page {
+    box-shadow: none;
+    margin: 0;
+    break-after: page;
+  }
+  .report-page:last-child {
+    break-after: auto;
+  }
+  .report-field {
+    border-color: transparent !important;
+    background: transparent !important;
+  }
+}
+
+/* No @page margin rule: a CSS margin here overrides the margins Puppeteer sets for
+   the repeating logo header and letterhead footer, and the content lands on top of
+   them. Page size and margins are set by the export route. */

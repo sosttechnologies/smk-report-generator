@@ -1,0 +1,9 @@
+<!-- PLACEHOLDER. Replace with the real SMK Gateway asset from SIEVEMK before any
+     report goes to a family. Approximates the mark in docs/reference/. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 132" width="360" height="132" role="img" aria-label="SMK Gateway">
+  <ellipse cx="86" cy="54" rx="82" ry="46" fill="#16205c"/>
+  <rect x="132" y="20" width="218" height="68" fill="#16205c"/>
+  <text x="40" y="68" font-family="Arial Black, Arial, sans-serif" font-size="42" font-weight="900" fill="#d81f26">SMK</text>
+  <text x="150" y="68" font-family="Arial Black, Arial, sans-serif" font-size="40" font-weight="900" fill="#ffffff">Gateway</text>
+  <text x="34" y="100" font-family="Arial, sans-serif" font-size="9.5" fill="#16205c">Creating Opportunities &#183; Delivering Excellence &#183; Changing Lives</text>
+</svg>
