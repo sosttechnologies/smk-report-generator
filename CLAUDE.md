@@ -25,9 +25,23 @@ npm run check     # parse the sample export and print the aggregates
 npm run build
 ```
 
-Set `ANTHROPIC_API_KEY` in `.env.local` for Claude drafting. Without it the app still works:
-generation falls back to a deterministic template. PDF/Word ingestion does **not** have a
-fallback and needs the key.
+Copy `.env.example` to `.env.local` and set `ANTHROPIC_API_KEY` for Claude drafting.
+Without it the app still works: generation falls back to a deterministic template.
+PDF/Word ingestion does **not** have a fallback and needs the key.
+
+## Deployment
+
+The key belongs in **server** environment variables, never in client code. Use SIEVEMK's own
+Anthropic organisation key — the commercial API is covered by Anthropic's DPA and is not
+trained on, which consumer claude.ai usage does not guarantee.
+
+PDF export runs Puppeteer, so this needs a host that runs a real process with Chromium
+available: **Railway, Render or Fly.io**, via the included `Dockerfile`. Vercel's default
+serverless runtime will not run it without swapping in `@sparticuz/chromium`.
+
+The page published as a claude.ai Artifact (`artifact/`) is a **demo only**. It is
+client-side, so it can never hold an API key; it borrows the viewer's own Claude through the
+`sample` runtime capability. Never put a key in it.
 
 ## Shape of the thing
 
