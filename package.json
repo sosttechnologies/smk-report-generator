@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "./scripts/sync-app.sh && next dev",
+    "build": "./scripts/sync-app.sh && next build",
     "start": "next start",
     "sample": "tsx scripts/make-sample-data.ts",
     "check": "tsx scripts/check-pipeline.ts",
     "preview": "tsx scripts/make-preview.ts",
     "check:privacy": "tsx scripts/check-pseudonymise.ts",
-    "test": "node tests/run.mjs"
+    "test": "node tests/run.mjs",
+    "sync": "./scripts/sync-app.sh",
+    "test:web": "node tests/run-web.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

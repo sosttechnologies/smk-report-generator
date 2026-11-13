@@ -17,3 +17,4 @@ smk-preview.html
 
 # Personal Claude Code settings (auto-push hook, extra permissions)
 .claude/settings.local.json
+public/app/

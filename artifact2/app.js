@@ -4,6 +4,7 @@
    offline drafting) is engine.js, shared with the Next.js app. */
 
 import * as E from './engine.js';
+import { makeRuntime } from './runtime.js';
 
 /* ================= helpers ================= */
 const $ = (s, r = document) => r.querySelector(s);
@@ -16,10 +17,12 @@ const ATTW = { full: 'Full attendance', partial: 'Some absence', none: 'Absent' 
 const initials = (n) => String(n).trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 
 /* ================= capabilities ================= */
-let sample = null, downloads = null;
+let sample = null, downloads = null, hosted = 'unknown';
 (async () => {
-  sample = await window.claude?.use?.('sample').catch(() => null) ?? null;
-  downloads = await window.claude?.use?.('downloads').catch(() => null) ?? null;
+  const rt = await makeRuntime();
+  sample = rt.sample; downloads = rt.downloads; hosted = rt.hosted;
+  // The export tiles and the refine box read these; refresh once they are known.
+  if (state.screen === 'report') renderPanel();
 })();
 
 /* ================= template ================= */
@@ -2463,11 +2466,11 @@ function shareModal() {
   });
   const pdfTile = tile('Download PDF', '', async () => {
     if (!downloads) throw new Error('Downloads are unavailable in this view.');
-    const html = reportHtml(r, false, picked).replace('</body>',
-      '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},400)})<\/script></body>');
-    await downloads.save({ filename: `${stem}.html`, data: html });
+    // Ask for a PDF. On our own server Chromium renders one; inside the claude.ai
+    // sandbox the runtime shim degrades this to an HTML file that prints itself.
+    const out = await downloads.save({ filename: `${stem}.pdf`, data: reportHtml(r, false, picked) });
     markShared(r);
-    toast('Saved — open it and choose Save as PDF.');
+    if (out?.degraded) toast('Saved as a page that opens ready to print — choose Save as PDF.');
   });
   const mailTile = tile('Email', '', async () => {
     const subject = `${r.student} — ${r.header.title || 'Termly report'}`;

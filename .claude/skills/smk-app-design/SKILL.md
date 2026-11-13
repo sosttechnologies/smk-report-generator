@@ -63,6 +63,29 @@ Radius 6–9 controls, 10–12 cards, 14 modal and drop zone, 999 pills.
 Single-theme by design: a paper-document tool committed to one light world. Every colour is
 painted explicitly so the page holds on any host background.
 
+## Where it runs — the runtime seam
+
+The same `app.js` runs in two places and must not know which:
+
+| Host | `sample` / `downloads` come from | PDF |
+|---|---|---|
+| claude.ai Artifact (demo only) | `window.claude.use(…)`, the viewer's own account | Sandbox cannot make one: a `.pdf` request degrades to an HTML page that prints itself |
+| **Our backend** (the product) | `artifact2/runtime.js` over `fetch` to `/api/llm` and `/api/pdf` | Real, rendered by Chromium on the server |
+
+`runtime.js` is the only file that knows about hosting. It asks `GET /api/llm` what the
+server can do (`available`, `images`) and hands `app.js` either the host's objects or
+fetch-backed equivalents with the same four calls. Keys never reach the browser.
+
+The backend picks the model from `LLM_PROVIDER` — `anthropic`, `openrouter` (one key, any
+listed model, open-weight included), `openai`, `ollama`, or `none`. With `none` every flow
+still completes on the deterministic template. `npm run test:web` proves both: it starts the
+app with no model, then again against a fake OpenAI-compatible server, and drives a browser
+through generate → review → export each time.
+
+Next.js serves `public/app/` (generated from `artifact2/` by `scripts/sync-app.sh`) at
+`/app`. The wrapper adds `<base href="/app/">` because `/app` has no trailing slash and
+relative URLs would otherwise resolve against `/`.
+
 ## Layout and screens
 
 `#app` is a 260px sidebar plus `minmax(0,1fr)`, full height. Main is a 56px `#topbar` over a
