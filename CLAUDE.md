@@ -7,11 +7,16 @@ Tutors submit a **weekly** Microsoft Form per student, per subject. Staff curren
 those responses by hand into a ~6-page "Interim Termly Report". This tool reads the
 submissions, drafts every section, lets staff edit, and exports the letterhead PDF.
 
-## Two hard rules
+## Three hard rules
 
 1. **Nothing exports without a human clicking Approve.** These are reports about children,
    read by their families. The `approved` state gates export; "Edit again" clears it.
-2. **No real student data in this repository.** Everything in `sample-data/` is invented.
+2. **A half-filled form still produces a report.** Only the student's name is required.
+   Every other blank — subject, week, attendance, ratings, comments — gets a *stated*
+   default (`General`, the submission date or current week, "not recorded") that is listed
+   in the file preview, and the document says what was not recorded rather than inventing a
+   grade or a sentence. Never skip a row, and never guess an attendance or a rating.
+3. **No real student data in this repository.** Everything in `sample-data/` is invented.
    Never commit a real SIEVEMK Forms export, PDF or screenshot containing a real child's
    name, comments or circumstances. The UK GDPR position on sending children's data to an
    LLM has **not** been settled with SIEVEMK — that must happen before this handles real data.

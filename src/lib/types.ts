@@ -5,6 +5,9 @@ export type Rating = 'Excellent' | 'Good' | 'Average' | 'Poor' | 'Not applicable
 /** Q5 — WEEKLY ATTENDANCE. */
 export type WeeklyAttendance = 'full' | 'none' | 'partial';
 
+/** Where a tutor left the subject blank the work is still filed, under this. */
+export const GENERAL_SUBJECT = 'General';
+
 /** Q6 — STUDENT ENGAGEMENT grid rows. */
 export const ENGAGEMENT_ROWS = [
   'Attendance',
@@ -33,12 +36,15 @@ export interface WeeklySubmission {
   subject: string;
   /** ISO date of the Monday the week begins. */
   weekBeginning: string;
-  weeklyAttendance: WeeklyAttendance;
+  /** null when the tutor recorded nothing — never guessed. */
+  weeklyAttendance: WeeklyAttendance | null;
   engagement: Partial<Record<EngagementRow, Rating>>;
   academics: Partial<Record<AcademicRow, Rating>>;
   concerns: string;
   keyActions: string;
   generalComments: string;
+  /** Fields the tutor left blank, with the default each was given. Only the name is required. */
+  gaps?: string[];
 }
 
 /** Problems found while parsing an upload, surfaced to staff rather than thrown away. */
@@ -66,7 +72,7 @@ export interface SubjectAggregate {
   attitudeToLearning: Rating;
   behaviourForLearning: Rating;
   contributionInLessons: Rating;
-  tutorAssessedProgress: 'Very good' | 'Developing' | 'Needs support';
+  tutorAssessedProgress: 'Very good' | 'Developing' | 'Needs support' | 'Not applicable';
   engagementMeans: Partial<Record<EngagementRow, number>>;
   academicMeans: Partial<Record<AcademicRow, number>>;
   /** Mean of the academics grid, week by week, used for the progress trend. */
@@ -79,7 +85,7 @@ export interface SubjectAggregate {
 export interface AttendanceWeek {
   weekBeginning: string;
   subject: string;
-  attendance: WeeklyAttendance;
+  attendance: WeeklyAttendance | null;
   punctuality: Rating | null;
 }
 
@@ -87,7 +93,8 @@ export interface AttendanceWeek {
 export interface AttendanceWeekSummary {
   weekBeginning: string;
   subjects: string[];
-  attendance: WeeklyAttendance;
+  /** 'unknown' when no tutor recorded attendance for that week. */
+  attendance: WeeklyAttendance | 'unknown';
   punctuality: Rating | null;
 }
 
@@ -98,9 +105,12 @@ export interface AttendanceAggregate {
   summary: AttendanceWeekSummary[];
   /** Distinct weeks, not submissions. */
   distinctWeeks: number;
+  /** Weeks where at least one tutor recorded attendance; the denominator for the narrative. */
+  recordedWeeks: number;
   fullWeeks: number;
   partialWeeks: number;
   absentWeeks: number;
+  unrecordedWeeks: number;
   modalPunctuality: Rating | null;
 }
 

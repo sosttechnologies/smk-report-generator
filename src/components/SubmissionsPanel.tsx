@@ -106,7 +106,7 @@ export function SubmissionsPanel({
             {term.attendance.weeks.map((week) => (
               <li key={`${week.weekBeginning}-${week.subject}`}>
                 {formatWeek(week.weekBeginning)} · {week.subject} ·{' '}
-                {ATTENDANCE_WORD[week.attendance]}
+                {week.attendance ? ATTENDANCE_WORD[week.attendance] : 'Attendance not recorded'}
               </li>
             ))}
           </ul>

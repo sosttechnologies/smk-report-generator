@@ -23,6 +23,7 @@ import type {
   ParseResult,
   WeeklySubmission,
 } from './types';
+import { GENERAL_SUBJECT } from './types';
 
 type Cell = string | number | Date | null;
 type Row = Record<string, Cell>;
@@ -36,6 +37,7 @@ interface HeaderMap {
 
 function buildHeaderMap(headers: string[]): HeaderMap {
   const map: HeaderMap = { scalars: {}, engagement: {}, academics: {}, unmapped: [] };
+  const ranks: Record<string, number> = {};
 
   for (const header of headers) {
     if (!header) continue;
@@ -65,7 +67,13 @@ function buildHeaderMap(headers: string[]): HeaderMap {
 
     const field = SCALAR_FIELDS.find((f) => f.aliases.some((a) => norm === a || norm.startsWith(a)));
     if (field) {
-      if (!(field.key in map.scalars)) map.scalars[field.key] = header;
+      // Earlier aliases are better matches: "Completion time" beats "Start time"
+      // for the submission stamp even though Forms puts Start time first.
+      const rank = field.aliases.findIndex((a) => norm === a || norm.startsWith(a));
+      if (!(field.key in map.scalars) || rank < (ranks[field.key] ?? Infinity)) {
+        map.scalars[field.key] = header;
+        ranks[field.key] = rank;
+      }
       continue;
     }
 
@@ -90,7 +98,7 @@ function parseWeekBeginning(value: Cell): string | null {
   const raw = text(value);
   if (!raw) return null;
 
-  const dmy = raw.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
+  const dmy = raw.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:[ T,].*)?$/);
   if (dmy) {
     const [, d, m, y] = dmy;
     const year = y.length === 2 ? 2000 + Number(y) : Number(y);
@@ -148,35 +156,36 @@ function rowsToSubmissions(rows: Row[], headers: string[]): ParseResult {
     };
 
     const studentName = text(get('studentName'));
-    const subject = canonicalSubject(text(get('subject')));
-    const weekBeginning = parseWeekBeginning(get('weekBeginning'));
+    let subject = canonicalSubject(text(get('subject')));
+    let weekBeginning = parseWeekBeginning(get('weekBeginning'));
 
     if (!studentName && !subject && !weekBeginning) return; // trailing blank row
 
+    // Only the name is required. Everything else is defaulted, and the default is
+    // stated, so a half-filled form still produces a report that says what it lacked.
     if (!studentName) {
       issues.push({ row: rowNumber, field: 'studentName', message: 'Missing student name — row skipped' });
       return;
     }
+    const gaps: string[] = [];
+    const note = (field: string, message: string) => {
+      gaps.push(message);
+      issues.push({ row: rowNumber, field, message: `${studentName}: ${message}` });
+    };
     if (!subject) {
-      issues.push({ row: rowNumber, field: 'subject', message: 'Missing subject — row skipped' });
-      return;
+      subject = GENERAL_SUBJECT;
+      note('subject', `no subject recorded — filed under ${GENERAL_SUBJECT}`);
     }
     if (!weekBeginning) {
-      issues.push({
-        row: rowNumber,
-        field: 'weekBeginning',
-        message: `Could not read the week beginning ("${text(get('weekBeginning'))}") — row skipped`,
-      });
-      return;
+      const stamped = parseWeekBeginning(get('submittedAt'));
+      weekBeginning = stamped ?? toMonday(new Date());
+      note('weekBeginning', stamped ? 'no week recorded — used the week the form was submitted' : 'no week recorded — used the current week');
     }
 
     const attendance = parseWeeklyAttendance(get('weeklyAttendance'));
     if (!attendance) {
-      issues.push({
-        row: rowNumber,
-        field: 'weeklyAttendance',
-        message: `Unrecognised attendance value ("${text(get('weeklyAttendance'))}") — treated as partial`,
-      });
+      const raw = text(get('weeklyAttendance'));
+      note('weeklyAttendance', raw ? `unrecognised attendance value ("${raw}") — left unrecorded` : 'attendance not recorded');
     }
 
     const engagement: WeeklySubmission['engagement'] = {};
@@ -191,19 +200,26 @@ function rowsToSubmissions(rows: Row[], headers: string[]): ParseResult {
       if (rating) academics[rowLabel as AcademicRow] = rating;
     }
 
+    if (!Object.keys(engagement).length && !Object.keys(academics).length) note('ratings', 'no ratings given');
+    const concerns = text(get('concerns'));
+    const keyActions = text(get('keyActions'));
+    const generalComments = text(get('generalComments'));
+    if (!concerns && !keyActions && !generalComments) note('comments', 'no comments, concerns or actions written');
+
     submissions.push({
       id: `${studentKey(studentName)}|${subject}|${weekBeginning}`,
-      submittedAt: text(row['Completion time'] ?? row['completion time'] ?? null) || null,
+      submittedAt: text(get('submittedAt')) || null,
       studentName: studentName.replace(/\s+/g, ' '),
       instructorName: text(get('instructorName')),
       subject,
       weekBeginning,
-      weeklyAttendance: attendance ?? 'partial',
+      weeklyAttendance: attendance,
       engagement,
       academics,
-      concerns: text(get('concerns')),
-      keyActions: text(get('keyActions')),
-      generalComments: text(get('generalComments')),
+      concerns,
+      keyActions,
+      generalComments,
+      gaps,
     });
   });
 

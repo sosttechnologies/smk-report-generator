@@ -18,6 +18,7 @@
  */
 
 import { canonicalSubject, studentKey } from './parse';
+import { GENERAL_SUBJECT } from './types';
 import type { AcademicRow, EngagementRow, Rating, WeeklyAttendance, WeeklySubmission } from './types';
 
 const RATING_WORDS = '(Excellent|Very good|Good|Average|Satisfactory|Poor|Not applicable|N/?A)';
@@ -97,13 +98,18 @@ const prose = (list: string[]) => list.map((s) => (/[.!?]$/.test(s) ? s : `${s}.
 const titleCase = (s: string) => tidy(s).replace(/\b([A-Z])([A-Z]+)\b/g, (_, f: string, r: string) => f + r.toLowerCase());
 const stripLevel = (s: string) => tidy(s).replace(/^(GCSE|A[- ]LEVEL|KS[34]|IGCSE)\s+/i, '');
 
-function attendanceFrom(text: string): WeeklyAttendance {
-  const a = text.toLowerCase();
+/** null when nothing was said about attendance — never a guess. */
+function attendanceFrom(text: string): WeeklyAttendance | null {
+  const a = text.toLowerCase().trim();
+  if (!a) return null;
   if (/100\s*%|\bfull\b/.test(a)) return 'full';
   if (/(^|\D)0\s*%|did not attend|no attendance/.test(a)) return 'none';
   if (/absent|missed|partial|some day/.test(a)) return 'partial';
-  return 'full';
+  return null;
 }
+
+/** Any other date in the document — sign-off, submission — stands in for a missing week. */
+const otherDate = (flat: string) => (flat.match(/\b(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\b/) ?? [])[1] ?? '';
 
 function toMonday(d: Date): string {
   const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -125,7 +131,7 @@ interface Fields {
   instructorName: string;
   subject: string;
   week: string;
-  weeklyAttendance: WeeklyAttendance;
+  weeklyAttendance: WeeklyAttendance | null;
   engagement: WeeklySubmission['engagement'];
   academics: WeeklySubmission['academics'];
   concerns: string;
@@ -133,11 +139,25 @@ interface Fields {
   generalComments: string;
 }
 
-function finish(f: Fields): WeeklySubmission | null {
-  const subject = canonicalSubject(stripLevel(f.subject));
-  const weekBeginning = parseDmy(f.week);
+function finish(f: Fields, flat: string): WeeklySubmission | null {
   const studentName = titleCase(f.studentName);
-  if (!studentName || !subject || !weekBeginning) return null;
+  if (!studentName) return null;
+  // Only the name is required. Every other blank is defaulted, and the default stated.
+  const gaps: string[] = [];
+  let subject = canonicalSubject(stripLevel(f.subject));
+  if (!subject) {
+    subject = GENERAL_SUBJECT;
+    gaps.push(`no subject recorded — filed under ${GENERAL_SUBJECT}`);
+  }
+  let weekBeginning = parseDmy(f.week);
+  if (!weekBeginning) {
+    const other = parseDmy(otherDate(flat));
+    weekBeginning = other ?? toMonday(new Date());
+    gaps.push(other ? 'no reporting week recorded — used the date on the document' : 'no reporting week recorded — used the current week');
+  }
+  if (!f.weeklyAttendance) gaps.push('attendance not recorded');
+  if (!Object.keys(f.engagement).length && !Object.keys(f.academics).length) gaps.push('no ratings given');
+  if (!f.concerns && !f.keyActions && !f.generalComments) gaps.push('no comments, concerns or actions written');
   return {
     id: `${studentKey(studentName)}|${subject}|${weekBeginning}`,
     submittedAt: null,
@@ -151,6 +171,7 @@ function finish(f: Fields): WeeklySubmission | null {
     concerns: f.concerns,
     keyActions: f.keyActions,
     generalComments: f.generalComments,
+    gaps,
   };
 }
 
@@ -175,7 +196,7 @@ function parseHeadedReport(flat: string): WeeklySubmission | null {
     studentName: grab(/STUDENT:\s*(.+?)\s*(?:INSTRUCTOR|TUTOR):/i),
     instructorName: grab(/(?:INSTRUCTOR|TUTOR):\s*(.+?)\s*SUBJECT:/i),
     subject: grab(/SUBJECT:\s*(.+?)\s*(?:ACADEMIC\s*YEAR|PERFORMANCE)/i),
-    week: grab(/WEEK\s*(?:COMMENCING|BEGINNING)\s*:?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i),
+    week: grab(/WEEK\s*(?:COMMENCING|BEGINNING)\s*[:\-–]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i),
     weeklyAttendance: attendanceFrom(grab(/Weekly\s*Attendance\s*Status:\s*(.+?)(?:\s*Observations:|\s*CURRICULUM|$)/i)),
     engagement: ratings(DOC_ENGAGEMENT),
     academics: ratings(DOC_ACADEMICS),
@@ -187,7 +208,7 @@ function parseHeadedReport(flat: string): WeeklySubmission | null {
       observations ? `Attendance: ${tidy(observations)}` : '',
       access ? `Access arrangements: ${tidy(access)}` : '',
     ].filter(Boolean).join(' '),
-  });
+  }, flat);
 }
 
 /* Layout B — the Microsoft Form printed to PDF, questions 1–10. */
@@ -230,7 +251,7 @@ function parseFormPrint(flat: string): WeeklySubmission | null {
     concerns: prose(items(after(8))),
     keyActions: prose(items(after(9))),
     generalComments: tidy(after(10)),
-  });
+  }, flat);
 }
 
 export function parseWeeklyReports(rawText: string): WeeklySubmission[] {

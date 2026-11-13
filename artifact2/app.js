@@ -13,7 +13,7 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 const uid = () => Math.random().toString(36).slice(2, 10);
 const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const fmtWeek = (iso) => { const d = new Date(iso); return isNaN(d) ? iso : `${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
-const ATTW = { full: 'Full attendance', partial: 'Some absence', none: 'Absent' };
+const ATTW = { full: 'Full attendance', partial: 'Some absence', none: 'Absent', unknown: 'Attendance not recorded', null: 'Attendance not recorded' };
 const initials = (n) => String(n).trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 
 /* ================= capabilities ================= */
@@ -203,7 +203,10 @@ async function extractDoc(file, onProgress) {
     const text = await documentText(file);
     if (!text.trim()) throw new Error('No readable text. If this is a scanned PDF, upload it as an image instead.');
     const parsed = E.parseWeeklyReports(text);
-    if (parsed.length) return { submissions: parsed, issues: [], unmappedHeaders: [], notes: [], parsedLocally: true };
+    if (parsed.length) {
+      const issues = parsed.flatMap((s) => (s.gaps ?? []).map((g) => ({ row: 0, field: '', message: `${s.studentName} · ${s.subject}: ${g}` })));
+      return { submissions: parsed, issues, unmappedHeaders: [], notes: [], parsedLocally: true };
+    }
     if (!sample) {
       throw new Error('This file does not follow the SMK weekly progress report layout, so it cannot be read without a model. Use the SMK template, or the Microsoft Forms .xlsx/.csv export.');
     }
@@ -279,14 +282,19 @@ const LI = (t) => ({ type: 'li', text: t });
 
 function contentToBlocks(c, term) {
   const subjects = term.subjects.map((s) => s.subject);
-  const grouped = (src) => subjects.flatMap((s) => [H(s.toUpperCase()), ...(src[s] ?? []).filter(Boolean).map(LI)]);
+  const NONE = 'Nothing was recorded in the tutor submissions for this period.';
+  const grouped = (src) => subjects.flatMap((s) => {
+    const items = (src[s] ?? []).filter(Boolean);
+    return [H(s.toUpperCase()), ...(items.length ? items.map(LI) : [P(NONE)])];
+  });
+  const targets = (c.targets ?? []).filter(Boolean);
   return {
     overview: String(c.overview).split(/\n{2,}/).filter(Boolean).map(P),
     attendance: [P(c.attendanceNarrative)],
     cognition: String(c.cognitionAndLearning).split(/\n{2,}/).filter(Boolean).map(P),
     successes: grouped(c.successes),
     challenges: grouped(c.challenges),
-    targets: (c.targets ?? []).filter(Boolean).map(LI),
+    targets: targets.length ? targets.map(LI) : [P('No key actions were recorded in the tutor submissions for this period.')],
     comms: [P(c.communicationAndInteraction)],
     semh: [P(c.socialEmotionalMentalHealth)],
     sensory: [P(c.sensoryPhysical)],
@@ -1180,6 +1188,19 @@ function filePreview(f) {
     }));
   }
   box.append(head);
+
+  // Blank fields are filled with a stated default and listed here — the report
+  // still generates, and staff can see what it had to do without.
+  const gaps = (f.issues ?? []).map((i) => i.message).filter(Boolean);
+  if (gaps.length) {
+    const g = el('div', 'fprev-gaps');
+    g.append(Object.assign(el('div', 'fprev-gaps-h'), { textContent: `${gaps.length} blank field${gaps.length === 1 ? '' : 's'} — report still generates` }));
+    const ul = el('ul');
+    for (const m of gaps.slice(0, 12)) ul.append(Object.assign(el('li'), { textContent: m }));
+    if (gaps.length > 12) ul.append(Object.assign(el('li'), { textContent: `and ${gaps.length - 12} more` }));
+    g.append(ul);
+    box.append(g);
+  }
 
   for (const [student, subs] of byStudent) {
     const grp = el('div', 'fprev-grp');

@@ -80,9 +80,10 @@ function nonEmpty(values: string[]): string[] {
  */
 function progressBand(
   trend: { mean: number | null }[],
-): 'Very good' | 'Developing' | 'Needs support' {
+): 'Very good' | 'Developing' | 'Needs support' | 'Not applicable' {
   const points = trend.map((t) => t.mean).filter((m): m is number => m !== null);
-  if (!points.length) return 'Developing';
+  // No ratings at all is not "developing" — it is unrecorded.
+  if (!points.length) return 'Not applicable';
 
   const overall = points.reduce((a, b) => a + b, 0) / points.length;
   const mid = Math.floor(points.length / 2);
@@ -173,14 +174,20 @@ function aggregateAttendance(submissions: WeeklySubmission[]): AttendanceAggrega
   let fullWeeks = 0;
   let partialWeeks = 0;
   let absentWeeks = 0;
+  let unrecordedWeeks = 0;
   const summary: AttendanceWeekSummary[] = [];
 
   for (const [weekBeginning, entries] of [...byWeek.entries()].sort()) {
-    let attendance: AttendanceWeek['attendance'];
-    if (entries.every((e) => e.attendance === 'full')) {
+    // A week counts only if at least one tutor recorded attendance for it.
+    const known = entries.filter((e) => e.attendance);
+    let attendance: AttendanceWeekSummary['attendance'];
+    if (!known.length) {
+      unrecordedWeeks += 1;
+      attendance = 'unknown';
+    } else if (known.every((e) => e.attendance === 'full')) {
       fullWeeks += 1;
       attendance = 'full';
-    } else if (entries.every((e) => e.attendance === 'none')) {
+    } else if (known.every((e) => e.attendance === 'none')) {
       absentWeeks += 1;
       attendance = 'none';
     } else {
@@ -199,9 +206,11 @@ function aggregateAttendance(submissions: WeeklySubmission[]): AttendanceAggrega
     weeks,
     summary,
     distinctWeeks: byWeek.size,
+    recordedWeeks: byWeek.size - unrecordedWeeks,
     fullWeeks,
     partialWeeks,
     absentWeeks,
+    unrecordedWeeks,
     modalPunctuality: modal(weeks.map((w) => w.punctuality)),
   };
 }

@@ -37,6 +37,25 @@ but the spelling drifts between exports. So:
 - Unmatched headers are reported to staff as `unmappedHeaders`, never silently dropped.
 - A bad row produces a `ParseIssue` and is skipped; it never kills the whole upload.
 
+## Only the name is required
+
+A tutor may leave almost everything blank and a report must still come out. The rule, in
+both `engine.js` and `src/lib/`:
+
+| Blank | Default | Flagged as |
+|---|---|---|
+| Subject | `General` (`GENERAL_SUBJECT`) | "no subject recorded — filed under General" |
+| Week | the form's Completion time (Forms stamps it) → any other date in the document (sign-off) → the current week | "no week recorded — used …" |
+| Weekly attendance | `null` — counted as **unrecorded**, never as partial | "attendance not recorded" |
+| Ratings | none → derived columns become `Not applicable`, progress `Not applicable` | "no ratings given" |
+| Concerns / actions / comments | empty → the section states nothing was recorded | "no comments, concerns or actions written" |
+
+Each submission carries its `gaps: string[]`; the UI turns them into `issues` shown in the
+file preview ("N blank fields — report still generates"). `aggregateAttendance` counts
+`recordedWeeks` / `unrecordedWeeks` and the narrative divides by *recorded* weeks; the
+template filters `Not applicable` out of every sentence ("Ratings for X have not yet been
+recorded"). A row with **no name** is the only thing skipped. `tests/16` is the check.
+
 ## Two ingestion paths
 
 - **`.xlsx` / `.csv`** → `src/lib/parse.ts`. Deterministic, no model, works with no API key.

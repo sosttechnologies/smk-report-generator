@@ -33,16 +33,18 @@ export function normaliseHeader(h) {
 
 const SCALAR_FIELDS = [
   { key: 'studentName', aliases: ['student name', 'student', 'name of student', 'pupil name'], required: true },
-  { key: 'instructorName', aliases: ['instructure name', 'instructor name', 'tutor name', 'tutor', 'instructor', 'teacher name'], required: true },
-  { key: 'subject', aliases: ['subject', 'subject taught'], required: true },
-  { key: 'weekBeginning', aliases: ['reporting week week beginning', 'reporting week', 'week beginning', 'week commencing'], required: true },
-  { key: 'weeklyAttendance', aliases: ['weekly attendance', 'attendance for the week'], required: true },
+  { key: 'instructorName', aliases: ['instructure name', 'instructor name', 'tutor name', 'tutor', 'instructor', 'teacher name'], required: false },
+  { key: 'subject', aliases: ['subject', 'subject taught'], required: false },
+  { key: 'weekBeginning', aliases: ['reporting week week beginning', 'reporting week', 'week beginning', 'week commencing'], required: false },
+  { key: 'weeklyAttendance', aliases: ['weekly attendance', 'attendance for the week'], required: false },
+  // Forms stamps every response; it stands in for the week when a tutor left Q4 blank.
+  { key: 'submittedAt', aliases: ['completion time', 'start time', 'last modified time', 'timestamp', 'submitted'], required: false },
   { key: 'concerns', aliases: ['concerns', 'areas of concern'], required: false },
   { key: 'keyActions', aliases: ['key actions', 'actions', 'next steps'], required: false },
   { key: 'generalComments', aliases: ['general comments', 'comments'], required: false },
 ];
 
-const METADATA_ALIASES = ['id', 'start time', 'completion time', 'email', 'name', 'last modified time'];
+const METADATA_ALIASES = ['id', 'email', 'name'];
 
 const GRID_SPECS = [
   { grid: 'engagement', prefixes: ['student engagement', 'engagement'], rows: ENGAGEMENT_ROWS },
@@ -113,7 +115,7 @@ export function parseWeekBeginning(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return toMonday(value);
   const raw = String(value ?? '').trim();
   if (!raw) return null;
-  const dmy = raw.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
+  const dmy = raw.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:[ T,].*)?$/);
   if (dmy) {
     const [, d, m, y] = dmy;
     const year = y.length === 2 ? 2000 + Number(y) : Number(y);
@@ -126,6 +128,7 @@ export function parseWeekBeginning(value) {
 
 function buildHeaderMap(headers) {
   const map = { scalars: {}, engagement: {}, academics: {}, unmapped: [] };
+  const ranks = {};
   for (const header of headers) {
     if (!header) continue;
     const norm = normaliseHeader(header);
@@ -145,7 +148,13 @@ function buildHeaderMap(headers) {
     }
     if (matched) continue;
     const field = SCALAR_FIELDS.find((f) => f.aliases.some((a) => norm === a || norm.startsWith(a)));
-    if (field) { if (!(field.key in map.scalars)) map.scalars[field.key] = header; continue; }
+    if (field) {
+      // Earlier aliases are better matches: "Completion time" beats "Start time"
+      // for the submission stamp even though Forms puts Start time first.
+      const rank = field.aliases.findIndex((a) => norm === a || norm.startsWith(a));
+      if (!(field.key in map.scalars) || rank < (ranks[field.key] ?? Infinity)) { map.scalars[field.key] = header; ranks[field.key] = rank; }
+      continue;
+    }
     if (METADATA_ALIASES.includes(norm)) continue;
     map.unmapped.push(header);
   }
@@ -153,6 +162,10 @@ function buildHeaderMap(headers) {
 }
 
 const txt = (v) => (v === null || v === undefined ? '' : v instanceof Date ? v.toISOString() : String(v).trim());
+
+/** Where a tutor left the subject blank the work is still filed, under this. */
+export const GENERAL_SUBJECT = 'General';
+const thisMonday = () => toMonday(new Date());
 
 export function rowsToSubmissions(rows, headers) {
   const map = buildHeaderMap(headers);
@@ -169,16 +182,23 @@ export function rowsToSubmissions(rows, headers) {
     const rowNumber = index + 2;
     const get = (key) => (map.scalars[key] ? (row[map.scalars[key]] ?? null) : null);
     const studentName = txt(get('studentName'));
-    const subject = canonicalSubject(txt(get('subject')));
-    const weekBeginning = parseWeekBeginning(get('weekBeginning'));
+    let subject = canonicalSubject(txt(get('subject')));
+    let weekBeginning = parseWeekBeginning(get('weekBeginning'));
 
     if (!studentName && !subject && !weekBeginning) return;
     if (!studentName) return issues.push({ row: rowNumber, field: 'studentName', message: 'Missing student name — row skipped' });
-    if (!subject) return issues.push({ row: rowNumber, field: 'subject', message: 'Missing subject — row skipped' });
-    if (!weekBeginning) return issues.push({ row: rowNumber, field: 'weekBeginning', message: `Could not read the week beginning ("${txt(get('weekBeginning'))}") — row skipped` });
+
+    const gaps = [];
+    const note = (field, message) => { gaps.push(message); issues.push({ row: rowNumber, field, message: `${studentName}: ${message}` }); };
+    if (!subject) { subject = GENERAL_SUBJECT; note('subject', `no subject recorded — filed under ${GENERAL_SUBJECT}`); }
+    if (!weekBeginning) {
+      const stamped = parseWeekBeginning(get('submittedAt'));
+      weekBeginning = stamped ?? thisMonday();
+      note('weekBeginning', stamped ? 'no week recorded — used the week the form was submitted' : 'no week recorded — used the current week');
+    }
 
     const attendance = parseWeeklyAttendance(get('weeklyAttendance'));
-    if (!attendance) issues.push({ row: rowNumber, field: 'weeklyAttendance', message: `Unrecognised attendance value ("${txt(get('weeklyAttendance'))}") — treated as partial` });
+    if (!attendance) note('weeklyAttendance', txt(get('weeklyAttendance')) ? `unrecognised attendance value ("${txt(get('weeklyAttendance'))}") — left unrecorded` : 'attendance not recorded');
 
     const engagement = {};
     for (const [label, header] of Object.entries(map.engagement)) {
@@ -189,16 +209,19 @@ export function rowsToSubmissions(rows, headers) {
       const r = parseRating(row[header]); if (r) academics[label] = r;
     }
 
+    if (!Object.keys(engagement).length && !Object.keys(academics).length) note('ratings', 'no ratings given');
+    const concerns = txt(get('concerns')), keyActions = txt(get('keyActions')), generalComments = txt(get('generalComments'));
+    if (!concerns && !keyActions && !generalComments) note('comments', 'no comments, concerns or actions written');
+
     submissions.push({
       id: `${studentKey(studentName)}|${subject}|${weekBeginning}`,
       studentName: studentName.replace(/\s+/g, ' '),
       instructorName: txt(get('instructorName')),
       subject, weekBeginning,
-      weeklyAttendance: attendance ?? 'partial',
+      weeklyAttendance: attendance,
       engagement, academics,
-      concerns: txt(get('concerns')),
-      keyActions: txt(get('keyActions')),
-      generalComments: txt(get('generalComments')),
+      concerns, keyActions, generalComments,
+      gaps,
     });
   });
 
@@ -241,7 +264,7 @@ function nonEmpty(values) {
 
 function progressBand(trend) {
   const points = trend.map((t) => t.mean).filter((m) => m !== null);
-  if (!points.length) return 'Developing';
+  if (!points.length) return 'Not applicable';
   const overall = points.reduce((a, b) => a + b, 0) / points.length;
   const mid = Math.floor(points.length / 2);
   const first = points.slice(0, mid || 1);
@@ -296,12 +319,15 @@ function aggregateAttendance(subs) {
   const byWeek = new Map();
   for (const w of weeks) { const l = byWeek.get(w.weekBeginning) ?? []; l.push(w); byWeek.set(w.weekBeginning, l); }
 
-  let fullWeeks = 0, partialWeeks = 0, absentWeeks = 0;
+  let fullWeeks = 0, partialWeeks = 0, absentWeeks = 0, unrecordedWeeks = 0;
   const summary = [];
   for (const [weekBeginning, entries] of [...byWeek.entries()].sort()) {
+    // A week counts only if at least one tutor recorded attendance for it.
+    const known = entries.filter((e) => e.attendance);
     let attendance;
-    if (entries.every((e) => e.attendance === 'full')) { fullWeeks++; attendance = 'full'; }
-    else if (entries.every((e) => e.attendance === 'none')) { absentWeeks++; attendance = 'none'; }
+    if (!known.length) { unrecordedWeeks++; attendance = 'unknown'; }
+    else if (known.every((e) => e.attendance === 'full')) { fullWeeks++; attendance = 'full'; }
+    else if (known.every((e) => e.attendance === 'none')) { absentWeeks++; attendance = 'none'; }
     else { partialWeeks++; attendance = 'partial'; }
     summary.push({
       weekBeginning,
@@ -309,7 +335,10 @@ function aggregateAttendance(subs) {
       attendance, punctuality: modal(entries.map((e) => e.punctuality)),
     });
   }
-  return { weeks, summary, distinctWeeks: byWeek.size, fullWeeks, partialWeeks, absentWeeks, modalPunctuality: modal(weeks.map((w) => w.punctuality)) };
+  return {
+    weeks, summary, distinctWeeks: byWeek.size, recordedWeeks: byWeek.size - unrecordedWeeks,
+    fullWeeks, partialWeeks, absentWeeks, unrecordedWeeks, modalPunctuality: modal(weeks.map((w) => w.punctuality)),
+  };
 }
 
 export function aggregateSubmissions(submissions) {
@@ -419,27 +448,51 @@ export function generateFromTemplate(term) {
   }
 
   const a = term.attendance;
-  const parts = [`${name} attended ${a.fullWeeks} of ${a.distinctWeeks} weeks in full during this reporting period.`];
+  const recorded = a.recordedWeeks ?? a.distinctWeeks;
+  const parts = recorded
+    ? [`${name} attended ${a.fullWeeks} of ${recorded} weeks in full during this reporting period.`]
+    : ['Attendance was not recorded in the tutor submissions for this reporting period.'];
   if (a.partialWeeks) parts.push(`There ${a.partialWeeks === 1 ? 'was' : 'were'} ${a.partialWeeks} week${a.partialWeeks === 1 ? '' : 's'} with some absence.`);
   if (a.absentWeeks) parts.push(`${a.absentWeeks} week${a.absentWeeks === 1 ? ' was' : 's were'} missed entirely.`);
+  if (recorded && a.unrecordedWeeks) parts.push(`Attendance was not recorded for ${a.unrecordedWeeks} further week${a.unrecordedWeeks === 1 ? '' : 's'}.`);
   if (a.modalPunctuality === 'Average' || a.modalPunctuality === 'Poor') parts.push('Punctuality has been a recurring concern; lost minutes accumulate and impact learning time.');
   else if (a.modalPunctuality) parts.push(`Punctuality has been ${a.modalPunctuality.toLowerCase()}.`);
+
+  // Ratings a tutor never gave come through as "Not applicable"; the prose must
+  // say so rather than read it as a grade.
+  const rated = (vals) => [...new Set(vals.filter((v) => v && v !== 'Not applicable').map((v) => v.toLowerCase()))];
+  const attitudes = rated(term.subjects.map((s) => s.attitudeToLearning));
+  const contributions = rated(term.subjects.map((s) => s.contributionInLessons));
+  const subjectProgress = (s) => {
+    const bits = [];
+    if (s.tutorAssessedProgress !== 'Not applicable') bits.push(`${s.tutorAssessedProgress.toLowerCase()} progress`);
+    if (s.attitudeToLearning !== 'Not applicable') bits.push(`${s.attitudeToLearning.toLowerCase()} attitude to learning`);
+    if (s.contributionInLessons !== 'Not applicable') bits.push(`${s.contributionInLessons.toLowerCase()} contribution in lessons`);
+    const lead = bits.length
+      ? `${name} has shown ${joinList(bits)} in ${s.subject} this term.`
+      : `Ratings for ${s.subject} have not yet been recorded by the tutor this term.`;
+    return `${lead} ${sentence(s.generalComments[0] ?? '')}`.trim();
+  };
 
   return {
     overview: [
       `${name} is a capable and engaged student who has made positive progress across ${joinList(subjectNames)} during the reporting period.`,
-      `Tutors report ${joinList([...new Set(term.subjects.map((s) => s.attitudeToLearning.toLowerCase()))])} attitude to learning.`,
+      attitudes.length ? `Tutors report ${joinList(attitudes)} attitude to learning.` : 'Tutor ratings have not yet been recorded for this period.',
       'Continued focus on the areas identified below will help build on this progress next term.',
     ].join(' '),
     subjects,
     attendanceNarrative: parts.join(' '),
     cognitionAndLearning: [
-      `In lessons, ${name} demonstrates a ${term.subjects[0]?.attitudeToLearning.toLowerCase() ?? 'positive'} attitude towards learning and engages with classroom activities.`,
-      ...term.subjects.map((s) => `${name} has shown ${s.tutorAssessedProgress.toLowerCase()} progress in ${s.subject} this term, with ${s.attitudeToLearning.toLowerCase()} attitude to learning and ${s.contributionInLessons.toLowerCase()} contribution in lessons. ${sentence(s.generalComments[0] ?? '')}`.trim()),
+      attitudes.length
+        ? `In lessons, ${name} demonstrates a ${attitudes[0]} attitude towards learning and engages with classroom activities.`
+        : `In lessons, ${name} engages with classroom activities.`,
+      ...term.subjects.map(subjectProgress),
     ].join('\n\n'),
     successes, challenges,
     targets: toBullets(term.subjects.flatMap((s) => s.keyActions)).slice(0, 12),
-    communicationAndInteraction: `${name} engages with staff and peers during sessions. Tutor comments across the term describe ${name}'s contribution in lessons as ${joinList([...new Set(term.subjects.map((s) => s.contributionInLessons.toLowerCase()))])}.`,
+    communicationAndInteraction: contributions.length
+      ? `${name} engages with staff and peers during sessions. Tutor comments across the term describe ${name}'s contribution in lessons as ${joinList(contributions)}.`
+      : `${name} engages with staff and peers during sessions. Tutors have not yet rated ${name}'s contribution in lessons this period.`,
     socialEmotionalMentalHealth: 'No specific concerns have been recorded in the tutor submissions for this reporting period. Please review and amend if staff hold additional context.',
     sensoryPhysical: 'No specific sensory or physical observations have been recorded in the tutor submissions for this reporting period. Please review and amend if staff hold additional context.',
   };
@@ -768,19 +821,34 @@ const prose = (list) => list.map((s) => (/[.!?]$/.test(s) ? s : s + '.')).join('
 const titleCase = (s) => tidy(s).replace(/\b([A-Z])([A-Z]+)\b/g, (_, f, r) => f + r.toLowerCase());
 const stripLevel = (s) => tidy(s).replace(/^(GCSE|A[- ]LEVEL|KS[34]|IGCSE)\s+/i, '');
 
+/** null when nothing was said about attendance — never a guess. */
 function attendanceFrom(text) {
-  const a = String(text).toLowerCase();
+  const a = String(text ?? '').toLowerCase().trim();
+  if (!a) return null;
   if (/100\s*%|\bfull\b/.test(a)) return 'full';
   if (/(^|\D)0\s*%|did not attend|no attendance/.test(a)) return 'none';
   if (/absent|missed|partial|some day/.test(a)) return 'partial';
-  return 'full';
+  return null;
 }
 
-function finish(fields) {
-  const subject = canonicalSubject(stripLevel(fields.subject));
-  const weekBeginning = parseWeekBeginning(fields.week);
+/** Any other date in the document — sign-off, submission — stands in for a missing week. */
+const otherDate = (flat) => (flat.match(/\b(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\b/) ?? [])[1] ?? '';
+
+function finish(fields, flat) {
   const studentName = titleCase(fields.studentName);
-  if (!studentName || !subject || !weekBeginning) return null;
+  if (!studentName) return null;
+  const gaps = [];
+  let subject = canonicalSubject(stripLevel(fields.subject));
+  if (!subject) { subject = GENERAL_SUBJECT; gaps.push(`no subject recorded — filed under ${GENERAL_SUBJECT}`); }
+  let weekBeginning = parseWeekBeginning(fields.week);
+  if (!weekBeginning) {
+    const other = parseWeekBeginning(otherDate(flat));
+    weekBeginning = other ?? thisMonday();
+    gaps.push(other ? 'no reporting week recorded — used the date on the document' : 'no reporting week recorded — used the current week');
+  }
+  if (!fields.weeklyAttendance) gaps.push('attendance not recorded');
+  if (!Object.keys(fields.engagement).length && !Object.keys(fields.academics).length) gaps.push('no ratings given');
+  if (!fields.concerns && !fields.keyActions && !fields.generalComments) gaps.push('no comments, concerns or actions written');
   return {
     id: `${studentKey(studentName)}|${subject}|${weekBeginning}`,
     studentName,
@@ -792,6 +860,7 @@ function finish(fields) {
     concerns: fields.concerns,
     keyActions: fields.keyActions,
     generalComments: fields.generalComments,
+    gaps,
   };
 }
 
@@ -816,7 +885,7 @@ function parseHeadedReport(flat) {
     studentName: grab(/STUDENT:\s*(.+?)\s*(?:INSTRUCTOR|TUTOR):/i),
     instructorName: grab(/(?:INSTRUCTOR|TUTOR):\s*(.+?)\s*SUBJECT:/i),
     subject: grab(/SUBJECT:\s*(.+?)\s*(?:ACADEMIC\s*YEAR|PERFORMANCE)/i),
-    week: grab(/WEEK\s*(?:COMMENCING|BEGINNING)\s*:?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i),
+    week: grab(/WEEK\s*(?:COMMENCING|BEGINNING)\s*[:\-–]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})/i),
     weeklyAttendance: attendanceFrom(grab(/Weekly\s*Attendance\s*Status:\s*(.+?)(?:\s*Observations:|\s*CURRICULUM|$)/i)),
     engagement: ratings(DOC_ENGAGEMENT),
     academics: ratings(DOC_ACADEMICS),
@@ -828,7 +897,7 @@ function parseHeadedReport(flat) {
       observations ? `Attendance: ${tidy(observations)}` : '',
       access ? `Access arrangements: ${tidy(access)}` : '',
     ].filter(Boolean).join(' '),
-  });
+  }, flat);
 }
 
 /* Layout B — the Microsoft Form printed to PDF, questions 1–10. */
@@ -873,7 +942,7 @@ function parseFormPrint(flat) {
     concerns: prose(items(after(8))),
     keyActions: prose(items(after(9))),
     generalComments: tidy(after(10)),
-  });
+  }, flat);
 }
 
 export function parseWeeklyReports(rawText) {

@@ -38,13 +38,18 @@ function joinList(items: string[]): string {
 
 function attendanceNarrative(term: StudentTerm): string {
   const name = firstName(term.studentName);
-  const { fullWeeks, partialWeeks, absentWeeks, distinctWeeks, modalPunctuality } = term.attendance;
-  const parts = [`${name} attended ${fullWeeks} of ${distinctWeeks} weeks in full during this reporting period.`];
+  const { fullWeeks, partialWeeks, absentWeeks, recordedWeeks, unrecordedWeeks, modalPunctuality } = term.attendance;
+  const parts = recordedWeeks
+    ? [`${name} attended ${fullWeeks} of ${recordedWeeks} weeks in full during this reporting period.`]
+    : ['Attendance was not recorded in the tutor submissions for this reporting period.'];
   if (partialWeeks) {
     parts.push(`There ${partialWeeks === 1 ? 'was' : 'were'} ${partialWeeks} week${partialWeeks === 1 ? '' : 's'} with some absence.`);
   }
   if (absentWeeks) {
     parts.push(`${absentWeeks} week${absentWeeks === 1 ? ' was' : 's were'} missed entirely.`);
+  }
+  if (recordedWeeks && unrecordedWeeks) {
+    parts.push(`Attendance was not recorded for ${unrecordedWeeks} further week${unrecordedWeeks === 1 ? '' : 's'}.`);
   }
   if (modalPunctuality && (modalPunctuality === 'Average' || modalPunctuality === 'Poor')) {
     parts.push('Punctuality has been a recurring concern; lost minutes accumulate and impact learning time.');
@@ -54,15 +59,19 @@ function attendanceNarrative(term: StudentTerm): string {
   return parts.join(' ');
 }
 
+/** Ratings a tutor never gave arrive as "Not applicable"; the prose must say so, not read it as a grade. */
+const rated = (values: string[]) => [...new Set(values.filter((v) => v && v !== 'Not applicable').map((v) => v.toLowerCase()))];
+
 function subjectOverview(name: string, subject: SubjectAggregate): string {
   const strengths = subject.generalComments[0] ?? '';
-  return [
-    `${name} has shown ${subject.tutorAssessedProgress.toLowerCase()} progress in ${subject.subject} this term,`,
-    `with ${subject.attitudeToLearning.toLowerCase()} attitude to learning and ${subject.contributionInLessons.toLowerCase()} contribution in lessons.`,
-    strengths ? sentence(strengths) : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const bits: string[] = [];
+  if (subject.tutorAssessedProgress !== 'Not applicable') bits.push(`${subject.tutorAssessedProgress.toLowerCase()} progress`);
+  if (subject.attitudeToLearning !== 'Not applicable') bits.push(`${subject.attitudeToLearning.toLowerCase()} attitude to learning`);
+  if (subject.contributionInLessons !== 'Not applicable') bits.push(`${subject.contributionInLessons.toLowerCase()} contribution in lessons`);
+  const lead = bits.length
+    ? `${name} has shown ${joinList(bits)} in ${subject.subject} this term.`
+    : `Ratings for ${subject.subject} have not yet been recorded by the tutor this term.`;
+  return [lead, strengths ? sentence(strengths) : ''].filter(Boolean).join(' ');
 }
 
 export function generateFromTemplate(term: StudentTerm): GeneratedContent {
@@ -82,14 +91,19 @@ export function generateFromTemplate(term: StudentTerm): GeneratedContent {
     challenges[subject.subject] = toBullets(subject.concerns).slice(0, 8);
   }
 
+  const attitudes = rated(term.subjects.map((s) => s.attitudeToLearning));
+  const contributions = rated(term.subjects.map((s) => s.contributionInLessons));
+
   const overview = [
     `${name} is a capable and engaged student who has made positive progress across ${joinList(subjectNames)} during the reporting period.`,
-    `Tutors report ${joinList([...new Set(term.subjects.map((s) => s.attitudeToLearning.toLowerCase()))])} attitude to learning.`,
+    attitudes.length ? `Tutors report ${joinList(attitudes)} attitude to learning.` : 'Tutor ratings have not yet been recorded for this period.',
     'Continued focus on the areas identified below will help build on this progress next term.',
   ].join(' ');
 
   const cognitionAndLearning = [
-    `In lessons, ${name} demonstrates a ${term.subjects[0]?.attitudeToLearning.toLowerCase() ?? 'positive'} attitude towards learning and engages with classroom activities.`,
+    attitudes.length
+      ? `In lessons, ${name} demonstrates a ${attitudes[0]} attitude towards learning and engages with classroom activities.`
+      : `In lessons, ${name} engages with classroom activities.`,
     ...term.subjects.map((s) => subjectOverview(name, s)),
   ].join('\n\n');
 
@@ -103,7 +117,9 @@ export function generateFromTemplate(term: StudentTerm): GeneratedContent {
     successes,
     challenges,
     targets,
-    communicationAndInteraction: `${name} engages with staff and peers during sessions. Tutor comments across the term describe ${name}'s contribution in lessons as ${joinList([...new Set(term.subjects.map((s) => s.contributionInLessons.toLowerCase()))])}.`,
+    communicationAndInteraction: contributions.length
+      ? `${name} engages with staff and peers during sessions. Tutor comments across the term describe ${name}'s contribution in lessons as ${joinList(contributions)}.`
+      : `${name} engages with staff and peers during sessions. Tutors have not yet rated ${name}'s contribution in lessons this period.`,
     socialEmotionalMentalHealth:
       'No specific concerns have been recorded in the tutor submissions for this reporting period. Please review and amend if staff hold additional context.',
     sensoryPhysical:

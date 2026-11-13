@@ -32,15 +32,21 @@ export const SCALAR_FIELDS: FieldSpec[] = [
     key: 'instructorName',
     // "INSTRUCTURE NAME" is the live form's spelling; accept the correct one too.
     aliases: ['instructure name', 'instructor name', 'tutor name', 'tutor', 'instructor', 'teacher name'],
-    required: true,
+    required: false,
   },
-  { key: 'subject', aliases: ['subject', 'subject taught'], required: true },
+  { key: 'subject', aliases: ['subject', 'subject taught'], required: false },
   {
     key: 'weekBeginning',
     aliases: ['reporting week week beginning', 'reporting week', 'week beginning', 'week commencing'],
-    required: true,
+    required: false,
   },
-  { key: 'weeklyAttendance', aliases: ['weekly attendance', 'attendance for the week'], required: true },
+  { key: 'weeklyAttendance', aliases: ['weekly attendance', 'attendance for the week'], required: false },
+  // Forms stamps every response; it stands in for the week when a tutor left Q4 blank.
+  {
+    key: 'submittedAt',
+    aliases: ['completion time', 'start time', 'last modified time', 'timestamp', 'submitted'],
+    required: false,
+  },
   { key: 'concerns', aliases: ['concerns', 'areas of concern'], required: false },
   { key: 'keyActions', aliases: ['key actions', 'actions', 'next steps'], required: false },
   {
@@ -51,14 +57,7 @@ export const SCALAR_FIELDS: FieldSpec[] = [
 ];
 
 /** Metadata columns Microsoft Forms adds; recognised so they aren't reported as unmapped. */
-export const METADATA_ALIASES = [
-  'id',
-  'start time',
-  'completion time',
-  'email',
-  'name',
-  'last modified time',
-];
+export const METADATA_ALIASES = ['id', 'email', 'name'];
 
 /**
  * Grid columns. A header matches when it contains the grid prefix AND the row label,
