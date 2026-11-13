@@ -31,7 +31,7 @@ await p.evaluate(() => document.querySelector('#new-proj').click());
 await new Promise((r) => setTimeout(r, 300));
 
 console.log('\n=== menu contents ===');
-const projItems = await openMenu('#projects .side-item .dots');
+const projItems = await openMenu('#projects > .side-item .dots');
 t('project menu', JSON.stringify(projItems), projItems.join(' / '));
 await p.keyboard.press('Escape');
 await p.evaluate(() => document.body.click());
@@ -99,13 +99,13 @@ await pick('Unarchive');
 t('unarchived', (await store()).reports[0].archived === false);
 
 console.log('\n=== archive a project takes its reports ===');
-await openMenu('#projects .side-item .dots');
+await openMenu('#projects > .side-item .dots');
 const projMenu = await p.$$eval('.menu button span:first-child', (n) => n.map((x) => x.textContent));
 t('project menu has Pin/Rename/Archive/Delete', ['Pin','Rename','Archive','Delete'].every((e) => projMenu.some((i) => i.startsWith(e))), projMenu.join(' / '));
 await p.evaluate(() => document.body.click());
 
 console.log('\n=== active project darkened ===');
-await p.evaluate(() => document.querySelector('#projects .side-item').click());
+await p.evaluate(() => document.querySelector('#projects > .side-item').click());
 await new Promise((r) => setTimeout(r, 300));
 const bg = await p.$eval('#projects .side-item.on', (n) => getComputedStyle(n).backgroundColor);
 const hover = await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--active').trim());

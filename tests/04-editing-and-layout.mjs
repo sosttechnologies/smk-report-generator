@@ -78,12 +78,12 @@ await p.evaluate(() => document.querySelector('#new-proj').click());
 await p.waitForFunction(() => document.querySelector('#screen input')?.value === 'Untitled project', { timeout: 8000 });
 t('new project created and opened', true);
 t('empty state shown', (await p.$eval('#screen', (x) => x.textContent)).includes('No reports here yet'));
-const projCount = await p.$$eval('#projects .side-item', (x) => x.length);
+const projCount = await p.$$eval('#projects > .side-item', (x) => x.length);
 t(`sidebar shows ${projCount} projects`, projCount === 2);
 
 await p.evaluate(() => { document.querySelector('#search').value = 'zzz'; document.querySelector('#search').dispatchEvent(new Event('input')); });
 t('search with no match shows message', (await p.$eval('#recents', (x) => x.textContent)).includes('No reports match'));
-await p.evaluate(() => { document.querySelector('#search').value = 'george'; document.querySelector('#search').dispatchEvent(new Event('input')); });
+await p.evaluate(() => { document.querySelector('#search').value = 'alex'; document.querySelector('#search').dispatchEvent(new Event('input')); });
 t('search matches by student', (await p.$$eval('#recents .side-item', (x) => x.length)) === 1);
 await p.evaluate(() => { document.querySelector('#search').value = ''; document.querySelector('#search').dispatchEvent(new Event('input')); });
 

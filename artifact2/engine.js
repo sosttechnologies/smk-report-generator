@@ -584,13 +584,19 @@ export function findResidualRisks(term) {
 }
 
 /* ---------------- built-in sample ---------------- */
-/** Invented data for the "Use George Holmes's Spring forms" button. No real student. */
+/**
+ * Synthetic data for the "Try it with sample data" button.
+ *
+ * The names here are deliberately unmistakable placeholders — "Alex Sample",
+ * "Tutor A" — rather than realistic ones. A realistic name in sample data can be
+ * mistaken for a real child, or coincide with one.
+ */
 export function sampleSubmissions() {
   const W = ['2026-05-04','2026-05-11','2026-05-18','2026-05-25','2026-06-01','2026-06-08'];
   const E4='Excellent', G='Good', A='Average';
   const mk = (subject, tutor, weeks) => weeks.map((w, i) => ({
-    id: `george-holmes|${subject}|${W[i]}`,
-    studentName: 'George Holmes', instructorName: tutor, subject, weekBeginning: W[i],
+    id: `alex-sample|${subject}|${W[i]}`,
+    studentName: 'Alex Sample', instructorName: tutor, subject, weekBeginning: W[i],
     weeklyAttendance: w.att,
     engagement: { Attendance: w.e[0], Punctuality: w.e[1], 'Preparation for Class': w.e[2], 'Homework completion': w.e[3] },
     academics: { 'Meets Deadlines': w.a[0], 'Quality of work': w.a[1], 'Understands key terms': w.a[2],
@@ -599,7 +605,7 @@ export function sampleSubmissions() {
   }));
 
   return [
-    ...mk('Maths', 'R. Adeyemi', [
+    ...mk('Maths', 'Tutor A', [
       { att:'full', e:[E4,G,E4,G], a:[G,G,E4,A,E4], c:'Limited resilience when faced with challenging algebra; gives up quickly on multi-step problems.', k:'Set three short practice questions between sessions to build persistence.', g:'Strong participation and engagement in lessons. Grasps new concepts quickly when introduced visually.' },
       { att:'full', e:[E4,G,E4,A], a:[G,E4,E4,G,E4], c:'Homework completion inconsistent this week.', k:'Agree a fixed homework slot with family.', g:'Secure on surds and index laws. Asked thoughtful questions about geometric proof.' },
       { att:'full', e:[E4,E4,E4,G], a:[E4,E4,E4,G,E4], c:'Handwriting legibility continues to affect marking of working out.', k:'Practise setting out working in a structured format.', g:'Excellent session. Confident across most of all topics covered this term.' },
@@ -607,7 +613,7 @@ export function sampleSubmissions() {
       { att:'full', e:[E4,E4,E4,G], a:[E4,E4,E4,G,E4], c:'Inconsistent independent revision between sessions.', k:'Introduce a weekly retrieval quiz.', g:'Very strong week. Applied algebra confidently to unfamiliar geometry questions.' },
       { att:'full', e:[E4,E4,E4,E4], a:[E4,E4,E4,G,E4], c:'Needs to maintain pace under timed conditions.', k:'Begin timed topic tests next term.', g:'Excellent attitude throughout. Most of all topics now secure.' },
     ]),
-    ...mk('English Language', 'A. Bello', [
+    ...mk('English Language', 'Tutor B', [
       { att:'full', e:[E4,A,G,A], a:[A,G,G,A,G], c:'Punctuality — arrived fifteen minutes late. Homework not submitted.', k:'Set a reminder the evening before each session.', g:'Positive attitude towards learning and good social skills with peers in the group.' },
       { att:'full', e:[E4,A,G,G], a:[G,G,G,A,E4], c:'Proofreading habits and attention to detail; SPaG errors recur in redrafts.', k:'Introduce a structured proofreading checklist.', g:'Increasing confidence in creative writing. Responds very well to structured guidance and feedback.' },
       { att:'full', e:[E4,G,E4,G], a:[G,E4,E4,G,E4], c:'Reading speed when tackling longer unseen texts.', k:'Ten minutes independent reading daily.', g:'Much improvement in deliberate use of language techniques. Strong curiosity and willingness to ask questions.' },
@@ -615,7 +621,7 @@ export function sampleSubmissions() {
       { att:'full', e:[E4,G,E4,G], a:[G,E4,E4,G,E4], c:'Technical vocabulary when analysing language features.', k:'Build a personal glossary of analytical terms.', g:'Sensitive and creative writing this week. Becoming more willing to tackle challenging tasks.' },
       { att:'full', e:[E4,G,E4,E4], a:[E4,E4,E4,G,E4], c:'Continue developing fuller paragraphs in analytical responses.', k:'Apply the point-evidence-analysis structure independently.', g:'Excellent engagement. Confidence in analytical writing has grown markedly across the term.' },
     ]),
-    ...mk('Sciences', 'J. Mensah', [
+    ...mk('Sciences', 'Tutor C', [
       { att:'full', e:[E4,A,G,A], a:[A,G,G,A,G], c:'Punctuality and time management. Homework completion inconsistent.', k:'Agree a consistent routine for arriving on time.', g:'Maintains positive attendance and commitment to lessons. Enthusiastic about Physics, particularly aviation and aircraft.' },
       { att:'full', e:[E4,G,G,A], a:[A,G,G,A,G], c:'Answers are too generalised and lack sufficient depth; surface-level recall rather than deeper understanding.', k:'Use question-led revision to deepen understanding.', g:'Regularly asks thought-provoking questions and demonstrates a strong desire to learn.' },
       { att:'full', e:[E4,G,E4,G], a:[G,G,E4,A,E4], c:'Poor use of scientific vocabulary in written answers. Formulae retention inconsistent.', k:'Practise retrieval of key formulae each session.', g:'Made notable progress in Electricity. Shows strong understanding when concepts are revisited and consolidated.' },

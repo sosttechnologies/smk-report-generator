@@ -20,7 +20,7 @@ await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.i
 t('sample file row shows Read', true);
 const detect = await p.$eval('.detect', (n) => n.textContent);
 t('detection line correct: ' + detect.trim(), detect.includes('3 subject') && detect.includes('18 weekly'));
-t('student prefilled', (await p.$$eval('.card input', (n) => n.map((x) => x.value)))[0] === 'George Holmes');
+t('student prefilled', (await p.$$eval('.card input', (n) => n.map((x) => x.value)))[0] === 'Alex Sample');
 
 const genDisabled = await p.$eval('.sticky-foot .btn', (n) => n.disabled);
 t('Generate enabled once read', !genDisabled);

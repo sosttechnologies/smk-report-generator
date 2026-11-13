@@ -8,11 +8,11 @@ const file = 'sample-data/smk-progress-forms-spring-2026.xlsx';
 
 async function main() {
   const { submissions } = await parseUpload(file, fs.readFileSync(file));
-  const term = aggregateSubmissions(submissions).find((t) => t.id === 'george-holmes')!;
+  const term = aggregateSubmissions(submissions).find((t) => t.id === 'alex-sample')!;
   const { term: masked, pseudonym } = pseudonymise(term);
 
   const payload = JSON.stringify(masked);
-  const leaked = ['George', 'Holmes', 'Adeyemi', 'Bello', 'Mensah'].filter((n) =>
+  const leaked = ['Alex', 'Sample', 'Tutor A', 'Tutor B', 'Tutor C'].filter((n) =>
     new RegExp(`\\b${n}\\b`, 'i').test(payload),
   );
 

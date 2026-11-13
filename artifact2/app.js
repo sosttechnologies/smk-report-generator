@@ -67,13 +67,15 @@ const state = {
   user: { name: 'Precious Joshua', org: 'SMK Gateway' },
   projects: [], reports: [], template: defaultTemplate(),
   screen: 'upload', activeProject: null, activeReport: null, showArchived: false,
+  expandedProjects: {},
   selSection: null, search: '', upload: null, gen: null,
 };
 
 function save() {
   try {
     localStorage.setItem(LS, JSON.stringify({
-      projects: state.projects, reports: state.reports, template: state.template, user: state.user,
+      projects: state.projects, reports: state.reports, template: state.template,
+      user: state.user, expandedProjects: state.expandedProjects,
     }));
   } catch { /* private window, quota — the app still works, it just won't persist */ }
 }
@@ -87,6 +89,7 @@ function load() {
     if (Array.isArray(d.reports)) state.reports = d.reports;
     if (d.template) state.template = { ...defaultTemplate(), ...d.template };
     if (d.user) state.user = d.user;
+    if (d.expandedProjects) state.expandedProjects = d.expandedProjects;
   } catch { /* corrupt store: start fresh rather than crash */ }
 }
 
@@ -415,6 +418,7 @@ async function runGeneration(term, meta) {
     templated,
   };
   state.reports.unshift(report);
+  state.expandedProjects[meta.projectId] = true;
   state.activeReport = report.id;
   state.selSection = null;
   state.gen = null;
@@ -498,6 +502,48 @@ function groupRecents(list) {
   return g;
 }
 
+/** One report row in the sidebar — used both under a project and in Recents. */
+function reportRow(r, { dimmed = false, nested = false } = {}) {
+  const on = state.screen === 'report' && state.activeReport === r.id;
+  const b = el('button', 'side-item' + (on ? ' on' : '') + (dimmed ? ' dim-row' : '') + (nested ? ' nested' : ''));
+  const l1 = el('span', 'l1');
+  if (r.unread) l1.append(el('span', 'unread-dot'));
+  if (r.pinned && !nested) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
+  l1.append(document.createTextNode(nested ? r.student : `${r.student} — Termly report`));
+  if (r.unread) l1.style.fontWeight = '600';
+  b.append(l1);
+  b.append(Object.assign(el('span', 'l2'), {
+    textContent: nested ? r.status : `${projectOf(r.projectId)?.name ?? 'No project'} · ${r.status}`,
+  }));
+  b.onclick = () => {
+    state.activeReport = r.id; state.selSection = null; state.screen = 'report';
+    r.unread = false; save(); render();
+  };
+  const d = el('button', 'dots', '⋯');
+  d.setAttribute('aria-label', `Options for ${r.student}'s report`);
+  d.onclick = (e) => {
+    e.stopPropagation();
+    const others = state.projects.filter((p) => !p.archived);
+    popMenu(d, [
+      { label: r.pinned ? 'Unpin' : 'Pin', check: !!r.pinned, run: () => toggleFlag(r, 'pinned', [`Pinned ${r.student}`, `Unpinned ${r.student}`]) },
+      { label: 'Rename', run: () => renameReport(r.id, b) },
+      { label: 'Move to project', items: others.map((proj) => ({
+          label: proj.name + (proj.id === r.projectId ? '  ·  current' : ''),
+          run: () => { if (proj.id !== r.projectId) moveReport(r.id, proj.id); },
+        })).concat([{ divider: true }, { label: '+ New project…', run: () => {
+          const proj = { id: uid(), name: 'Untitled project' };
+          state.projects.push(proj); moveReport(r.id, proj.id);
+        } }]) },
+      { label: r.unread ? 'Mark as read' : 'Mark as unread', run: () => toggleFlag(r, 'unread', ['Marked unread', 'Marked read']) },
+      { divider: true },
+      { label: r.archived ? 'Unarchive' : 'Archive', run: () => archiveReport(r.id) },
+      { label: 'Delete', danger: true, run: () => deleteReport(r.id) },
+    ]);
+  };
+  b.append(d);
+  return b;
+}
+
 function renderSidebar() {
   $('#acct-name').textContent = state.user.name;
   $('#acct-ini').textContent = initials(state.user.name);
@@ -509,27 +555,57 @@ function renderSidebar() {
 
   for (const proj of ordered) {
     const on = state.screen === 'project' && state.activeProject === proj.id;
-    const b = el('button', 'side-item' + (on ? ' on' : ''));
-    const n = reportsIn(proj.id).filter((r) => !r.archived).length;
+    const kids = reportsIn(proj.id).filter((r) => !r.archived)
+      .sort((a, b2) => b2.updatedAt - a.updatedAt);
+    const open = !!state.expandedProjects[proj.id];
+
+    const b = el('button', 'side-item has-chev' + (on ? ' on' : ''));
+    // The chevron expands in place; the row itself still opens the project page.
+    const chev = el('span', 'chev-btn' + (open ? ' open' : ''));
+    chev.textContent = '▸';
+    chev.setAttribute('role', 'button');
+    chev.setAttribute('tabindex', '0');
+    chev.setAttribute('aria-expanded', String(open));
+    chev.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${proj.name}`);
+    const toggle = (e) => {
+      e.stopPropagation(); e.preventDefault();
+      if (open) delete state.expandedProjects[proj.id];
+      else state.expandedProjects[proj.id] = true;
+      save(); renderSidebar();
+    };
+    chev.onclick = toggle;
+    chev.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); };
+
     const l1 = el('span', 'l1');
     if (proj.pinned) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
-    l1.append(document.createTextNode(`▸ ${proj.name} `));
-    l1.append(Object.assign(el('span'), { textContent: n || '', style: 'color:var(--faint);font-weight:400' }));
-    b.append(l1);
+    l1.append(document.createTextNode(proj.name + ' '));
+    l1.append(Object.assign(el('span'), { textContent: kids.length || '', style: 'color:var(--faint);font-weight:400' }));
+    b.append(chev, l1);
     b.onclick = () => { state.activeProject = proj.id; state.screen = 'project'; render(); };
     const d = el('button', 'dots', '⋯');
     d.setAttribute('aria-label', `Options for ${proj.name}`);
     d.onclick = (e) => {
       e.stopPropagation();
       popMenu(d, [
+        { label: open ? 'Collapse' : 'Expand', run: () => toggle(new Event('x')) },
         { label: proj.pinned ? 'Unpin' : 'Pin', check: !!proj.pinned, run: () => toggleFlag(proj, 'pinned', [`Pinned “${proj.name}”`, `Unpinned “${proj.name}”`]) },
         { label: 'Rename', run: () => renameProject(proj.id, b) },
+        { label: 'New report here', run: () => { state.activeProject = proj.id; state.upload = null; state.screen = 'upload'; render(); } },
         { divider: true },
         { label: 'Archive', run: () => archiveProject(proj.id) },
         { label: 'Delete', danger: true, run: () => deleteProject(proj.id) },
       ]);
     };
     b.append(d); pc.append(b);
+
+    if (open) {
+      const nest = el('div', 'nest');
+      if (!kids.length) {
+        nest.append(Object.assign(el('div', 'nest-empty'), { textContent: 'No reports yet' }));
+      }
+      for (const r of kids) nest.append(reportRow(r, { nested: true }));
+      pc.append(nest);
+    }
   }
 
   const archivedProjects = state.projects.filter((p) => p.archived);
@@ -570,46 +646,7 @@ function renderSidebar() {
     return;
   }
 
-  const makeRow = (r, dimmed) => {
-    const on = state.screen === 'report' && state.activeReport === r.id;
-    const b = el('button', 'side-item' + (on ? ' on' : '') + (dimmed ? ' dim-row' : ''));
-    const l1 = el('span', 'l1');
-    if (r.unread) l1.append(el('span', 'unread-dot'));
-    if (r.pinned) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
-    l1.append(document.createTextNode(`${r.student} — Termly report`));
-    if (r.unread) l1.style.fontWeight = '600';
-    b.append(l1);
-    b.append(Object.assign(el('span', 'l2'), {
-      textContent: `${projectOf(r.projectId)?.name ?? 'No project'} · ${r.status}`,
-    }));
-    b.onclick = () => {
-      state.activeReport = r.id; state.selSection = null; state.screen = 'report';
-      r.unread = false; save(); render();
-    };
-    const d = el('button', 'dots', '⋯');
-    d.setAttribute('aria-label', `Options for ${r.student}'s report`);
-    d.onclick = (e) => {
-      e.stopPropagation();
-      const others = state.projects.filter((p) => !p.archived);
-      popMenu(d, [
-        { label: r.pinned ? 'Unpin' : 'Pin', check: !!r.pinned, run: () => toggleFlag(r, 'pinned', [`Pinned ${r.student}`, `Unpinned ${r.student}`]) },
-        { label: 'Rename', run: () => renameReport(r.id, b) },
-        { label: 'Move to project', items: others.map((proj) => ({
-            label: proj.name + (proj.id === r.projectId ? '  ·  current' : ''),
-            run: () => { if (proj.id !== r.projectId) moveReport(r.id, proj.id); },
-          })).concat([{ divider: true }, { label: '+ New project…', run: () => {
-            const proj = { id: uid(), name: 'Untitled project' };
-            state.projects.push(proj); moveReport(r.id, proj.id);
-          } }]) },
-        { label: r.unread ? 'Mark as read' : 'Mark as unread', run: () => toggleFlag(r, 'unread', [`Marked unread`, `Marked read`]) },
-        { divider: true },
-        { label: r.archived ? 'Unarchive' : 'Archive', run: () => archiveReport(r.id) },
-        { label: 'Delete', danger: true, run: () => deleteReport(r.id) },
-      ]);
-    };
-    b.append(d);
-    return b;
-  };
+  const makeRow = (r, dimmed) => reportRow(r, { dimmed });
 
   const pinned = visible.filter((r) => r.pinned);
   if (pinned.length) {
@@ -825,7 +862,7 @@ function screenUpload() {
 
   const tryIt = el('p', 'try-line');
   tryIt.append(document.createTextNode('No files to hand? '));
-  const sampleLink = el('button', 'linkish', "Try it with George Holmes's sample forms");
+  const sampleLink = el('button', 'linkish', 'Try it with sample data');
   sampleLink.onclick = () => loadSample();
   tryIt.append(sampleLink);
   wrap.append(tryIt);
@@ -1718,7 +1755,7 @@ async function handleFiles(fileList) {
 
 async function loadSample() {
   state.upload ||= { files: [], student: '', keyStage: 'KS 4', projectId: ensureProject(), term: null, failed: 0 };
-  const slot = { name: 'George Holmes — Spring 2026 forms.xlsx', size: 18000, status: 'reading', ok: false, submissions: [], error: null, detail: 'Loading sample…' };
+  const slot = { name: 'Sample — Spring 2026 tutor forms.xlsx', size: 18000, status: 'reading', ok: false, submissions: [], error: null, detail: 'Loading sample…' };
   state.upload.files.push(slot);
   render();
   const subs = E.sampleSubmissions();
@@ -1726,7 +1763,7 @@ async function loadSample() {
     status: 'done', ok: true, submissions: subs,
     detail: `${subs.length} responses · ${[...new Set(subs.map((s) => s.subject))].join(', ')}`,
   });
-  state.upload.student = 'George Holmes';
+  state.upload.student = 'Alex Sample';
   state.upload.keyStage = 'KS 4';
   recomputeUpload();
   render();

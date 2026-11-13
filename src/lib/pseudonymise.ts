@@ -24,13 +24,13 @@
 import type { StudentTerm, WeeklySubmission } from './types';
 
 export interface Pseudonym {
-  /** token -> real value, e.g. "Student A" -> "George Holmes" */
+  /** token -> real value, e.g. "Student A" -> the student's actual name */
   map: Record<string, string>;
   studentToken: string;
   studentFirstToken: string;
 }
 
-/** Longest first, so "George Holmes" is replaced before "George". */
+/** Longest first, so a full name is replaced before either of its parts. */
 function orderedNames(names: string[]): string[] {
   return [...new Set(names.filter(Boolean))].sort((a, b) => b.length - a.length);
 }
@@ -71,7 +71,7 @@ export function pseudonymise(term: StudentTerm): { term: StudentTerm; pseudonym:
     const token = `Tutor ${i + 1}`;
     map[token] = tutor;
     pairs.push([tutor, token]);
-    // "J. Mensah" is also written as "Mensah" in comments.
+    // A tutor written "J. Smith" elsewhere may appear as just "Smith" in comments.
     for (const piece of tutor.split(/[.\s]+/).filter((p) => p.length > 2)) {
       pairs.push([piece, token]);
     }

@@ -23,7 +23,7 @@ async function main() {
   const file = 'sample-data/smk-progress-forms-spring-2026.xlsx';
   const { submissions } = await parseUpload(file, fs.readFileSync(file));
   const terms = aggregateSubmissions(submissions);
-  const term = terms.find((t) => t.id === 'george-holmes')!;
+  const term = terms.find((t) => t.id === 'alex-sample')!;
 
   const setup = {
     ...defaultSetup(term),
@@ -274,7 +274,7 @@ h2 + .sub{color:var(--muted);font-size:14px;margin:0 0 22px;max-width:62ch}
   </div>
 
   <h2>The document it produces</h2>
-  <p class="sub">Real output from the sample data &mdash; George Holmes, six weeks across three
+  <p class="sub">Real output from the synthetic sample data &mdash; six weeks across three
   subjects. Below is what exports to PDF, with the letterhead footer on every page.</p>
   <div class="sheets">${pages}</div>
 

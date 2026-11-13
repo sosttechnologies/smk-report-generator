@@ -1,8 +1,9 @@
 /**
  * Generates a trial Microsoft Forms export for the demo.
  *
- * ALL DATA HERE IS INVENTED. No real SIEVEMK student, tutor or comment appears in this
- * repository. The column headers mirror what Microsoft Forms produces so the parser is
+ * ALL DATA HERE IS SYNTHETIC, and the names are deliberately unmistakable placeholders
+ * ("Alex Sample", "Tutor A") rather than realistic ones — a realistic name in sample data
+ * can be mistaken for a real child, or coincide with one. The column headers mirror what Microsoft Forms produces so the parser is
  * exercised against the real shape.
  */
 
@@ -40,9 +41,9 @@ const PART: Att = 'ABSENT ON SOME DAY/S DURING THE WEEK';
 
 const SPECS: Spec[] = [
   {
-    student: 'George Holmes',
+    student: 'Alex Sample',
     subject: 'Maths',
-    tutor: 'R. Adeyemi',
+    tutor: 'Tutor A',
     weeks: [
       { attendance: FULL, engagement: [E, G, E, G], academics: [G, G, E, A, E],
         concerns: 'Limited resilience when faced with challenging algebra questions; gives up quickly on multi-step problems.',
@@ -71,9 +72,9 @@ const SPECS: Spec[] = [
     ],
   },
   {
-    student: 'George Holmes',
+    student: 'Alex Sample',
     subject: 'English Language',
-    tutor: 'A. Bello',
+    tutor: 'Tutor B',
     weeks: [
       { attendance: FULL, engagement: [E, A, G, A], academics: [A, G, G, A, G],
         concerns: 'Punctuality — arrived fifteen minutes late. Homework not submitted.',
@@ -102,9 +103,9 @@ const SPECS: Spec[] = [
     ],
   },
   {
-    student: 'George Holmes',
+    student: 'Alex Sample',
     subject: 'Sciences',
-    tutor: 'J. Mensah',
+    tutor: 'Tutor C',
     weeks: [
       { attendance: FULL, engagement: [E, A, G, A], academics: [A, G, G, A, G],
         concerns: 'Punctuality and time management. Homework completion inconsistent.',
@@ -133,9 +134,9 @@ const SPECS: Spec[] = [
     ],
   },
   {
-    student: 'Amara Okafor',
+    student: 'Robin Example',
     subject: 'English Language',
-    tutor: 'A. Bello',
+    tutor: 'Tutor B',
     weeks: [
       { attendance: FULL, engagement: [E, E, E, E], academics: [E, E, E, G, E],
         concerns: 'Occasionally repetitive sentence structure.',
@@ -156,9 +157,9 @@ const SPECS: Spec[] = [
     ],
   },
   {
-    student: 'Amara Okafor',
+    student: 'Robin Example',
     subject: 'Maths',
-    tutor: 'R. Adeyemi',
+    tutor: 'Tutor A',
     weeks: [
       { attendance: FULL, engagement: [E, E, G, G], academics: [G, G, E, G, E],
         concerns: 'Does not always show working on multi-step problems.',
@@ -179,9 +180,9 @@ const SPECS: Spec[] = [
     ],
   },
   {
-    student: 'Daniel Kamara',
+    student: 'Sam Placeholder',
     subject: 'Maths',
-    tutor: 'R. Adeyemi',
+    tutor: 'Tutor A',
     weeks: [
       { attendance: PART, engagement: [A, A, A, P], academics: [P, A, A, P, A],
         concerns: 'Attendance and homework completion are the main barriers to progress.',
@@ -202,9 +203,9 @@ const SPECS: Spec[] = [
     ],
   },
   {
-    student: 'Daniel Kamara',
+    student: 'Sam Placeholder',
     subject: 'English Language',
-    tutor: 'A. Bello',
+    tutor: 'Tutor B',
     weeks: [
       { attendance: PART, engagement: [A, A, A, P], academics: [P, A, A, P, A],
         concerns: 'Quotation analysis for literature remains underdeveloped.',
