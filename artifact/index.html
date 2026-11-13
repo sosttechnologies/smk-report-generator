@@ -54,6 +54,13 @@ h1{font-family:'Cormorant Garamond',ui-serif,Georgia,serif;font-weight:400;
 .btn-ghost:hover{background:var(--panel)}
 #up-status{margin-top:16px;color:var(--muted);font-size:14px}
 #up-error{margin-top:16px;background:var(--err-bg);color:var(--err-fg);padding:12px 16px;border-radius:5px;font-size:14px}
+#up-log{margin-top:14px;display:flex;flex-direction:column;gap:5px}
+.logline{font-size:13.5px;display:flex;gap:9px;align-items:baseline;color:var(--ink)}
+.logline .mark{font-weight:600;width:12px;flex:none}
+.logline.ok .mark{color:#2F7D4F} .logline.bad{color:var(--err-fg)}
+.logline .spin{color:var(--muted);animation:pulse 1s ease-in-out infinite;width:12px;flex:none}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.logline .spin{animation:none}}
 .gate{margin-top:22px;font-size:13px;color:var(--muted);border-left:2px solid var(--border);padding-left:12px}
 #ai-state{display:inline-block;margin-top:14px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:3px 11px}
@@ -124,6 +131,9 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
 .toolbar button:hover{background:var(--espresso-hi)}
 .toolbar button.ghost{background:transparent;color:var(--ink);border:1px solid var(--border)}
 .toolbar button.ghost:hover{background:var(--panel)}
+.toolbar button:disabled{opacity:.4;cursor:not-allowed}
+.toolbar button:disabled:hover{background:var(--espresso)}
+.toolbar button.ghost:disabled:hover{background:transparent}
 #note{padding:10px 24px;font-size:13px;border-bottom:1px solid var(--border);
   background:var(--review-bg);color:var(--review-fg)}
 #note::before{content:'';display:inline-block;width:7px;height:7px;border-radius:999px;
@@ -178,6 +188,21 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
 .rf:focus{border-color:#b9a68d;background:#fffcf6}
 .rf[readonly]{border-color:transparent;background:transparent}
 .rf-static{white-space:pre-wrap}
+/* Inline editors for labels and headings. Look like plain text until hovered. */
+.rl{display:inline-block;min-width:1ch;border-radius:2px;
+  outline:1px solid transparent;outline-offset:1px;transition:outline-color .12s,background .12s}
+.rl[contenteditable]:hover{outline-color:#e2d8c6;background:#fffdf8}
+.rl[contenteditable]:focus{outline:1px solid #b9a68d;background:#fffcf6}
+.rl.tiny{font-size:inherit}
+.rlogo-wrap{position:relative;display:inline-block;margin-bottom:22px}
+.rlogo{width:140px;height:auto;display:block;margin:0}
+.logo-swap{position:absolute;left:0;bottom:-7px;transform:translateY(100%);
+  font-family:Jost,sans-serif;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  border:1px solid #d8cdba;background:#fff;color:#6b5a4a;border-radius:3px;padding:2px 7px;
+  opacity:0;transition:opacity .12s;white-space:nowrap}
+.rlogo-wrap:hover .logo-swap,.logo-swap:focus{opacity:1}
+.edit-hint{font-family:Jost,sans-serif;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);text-align:center;margin:0 auto 14px;max-width:794px}
 @media (max-width:620px){
   .sheet{padding:20px 16px 76px;min-height:0}
   .rfoot{left:16px;right:16px}
@@ -192,6 +217,8 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
   .sheet{box-shadow:none;border:0;margin:0;page-break-after:always;min-height:0}
   .sheet:last-child{page-break-after:auto}
   .rf{border-color:transparent!important;background:transparent!important}
+  .rl{outline:none!important;background:none!important}
+  .logo-swap,.edit-hint{display:none!important}
   @page{size:A4;margin:0}
 }
 </style>
@@ -206,14 +233,17 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
 
     <div id="dropzone">
       <p>Drop the tutor submissions here</p>
-      <p class="formats">Microsoft Forms export (<strong>.xlsx</strong>, <strong>.csv</strong>) is read directly.<br>
+      <p class="formats">One file or many — mix formats freely, and add more later.<br>
+        Microsoft Forms export (<strong>.xlsx</strong>, <strong>.csv</strong>) is read directly.<br>
         <strong>PDF</strong>, <strong>Word</strong>, text and images are read by Claude and shown for checking.</p>
-      <button class="btn" id="choose" type="button">Choose a file</button>
-      <input id="file-input" type="file" hidden
+      <button class="btn" id="choose" type="button">Choose files</button>
+      <input id="logo-input" type="file" hidden accept="image/png,image/jpeg,image/svg+xml,image/webp">
+      <input id="file-input" type="file" hidden multiple
         accept=".xlsx,.xlsm,.csv,.pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.webp">
     </div>
 
     <p id="up-status" hidden></p>
+    <div id="up-log" hidden></div>
     <p id="up-error" hidden></p>
     <p class="gate">Nothing is exported until a member of staff clicks Approve.
       These are reports about children.</p>
@@ -225,7 +255,9 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
 <div id="workspace" hidden>
   <header class="bar">
     <div style="display:flex;align-items:baseline;gap:14px"><b>SIEVEMK</b><span class="tag">Termly reports</span></div>
-    <div class="right"><span id="file-label"></span><button id="restart" type="button">New upload</button></div>
+    <div class="right"><span id="file-label"></span>
+      <button id="add-more" type="button">Add files</button>
+      <button id="restart" type="button">Start over</button></div>
   </header>
 
   <div class="cols">
@@ -261,7 +293,7 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
           <button id="approve" type="button" hidden>Approve report</button>
           <button id="reopen" class="ghost" type="button" hidden>Edit again</button>
           <button id="print" type="button" hidden>Print / Save as PDF</button>
-          <button id="save" class="ghost" type="button" hidden data-needs-download>Download</button>
+          <button id="save" class="ghost" type="button" hidden data-needs-download>Download for PDF</button>
         </div>
       </div>
       <div id="note" hidden></div>
@@ -270,7 +302,10 @@ main{flex:2 1 520px;min-width:0;display:flex;flex-direction:column}
           <div class="big">No report yet</div>
           <p id="empty-hint"></p>
         </div>
-        <div id="paper" hidden></div>
+        <div style="width:100%;display:flex;flex-direction:column;align-items:center">
+          <p class="edit-hint" id="edit-hint" hidden>Every heading, label and paragraph below is editable — click any of it</p>
+          <div id="paper" hidden></div>
+        </div>
       </div>
     </main>
   </div>

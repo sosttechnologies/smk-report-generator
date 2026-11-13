@@ -10,7 +10,11 @@ const ATT = { full: 'Full attendance', partial: 'Some absence', none: 'Absent' }
 
 const state = {
   terms: [], selected: '', setups: {}, reports: {}, statuses: {},
-  method: 'spreadsheet', filename: '', issues: [], unmapped: [], notes: [], count: 0,
+  /** Every submission read so far, across every file. Re-aggregated on each add. */
+  submissions: [],
+  /** One entry per file the user has given us, kept so they can see what landed. */
+  files: [],
+  method: 'spreadsheet', issues: [], notes: [],
 };
 let sample = null, downloads = null;
 
@@ -135,40 +139,102 @@ async function extractFromDocument(file, onProgress) {
 }
 
 /* ---------- upload flow ---------- */
-async function handleFile(file) {
+
+/** Reads one file. Never throws — a bad file must not take the batch down with it. */
+async function readOne(file, progress) {
+  const spreadsheet = /\.(xlsx|xlsm|csv)$/i.test(file.name);
+  try {
+    const res = spreadsheet ? await readSpreadsheet(file) : await extractFromDocument(file, progress);
+    return {
+      name: file.name,
+      kind: spreadsheet ? 'spreadsheet' : 'document',
+      ok: res.submissions.length > 0,
+      count: res.submissions.length,
+      submissions: res.submissions,
+      issues: res.issues ?? [],
+      notes: res.notes ?? [],
+      error: res.submissions.length ? null
+        : (spreadsheet ? 'No usable submissions — is this the Forms response export?'
+                       : 'No submissions found. A blank form template has nothing to read.'),
+    };
+  } catch (e) {
+    return { name: file.name, kind: spreadsheet ? 'spreadsheet' : 'document', ok: false,
+      count: 0, submissions: [], issues: [], notes: [], error: e?.message || 'Could not read this file.' };
+  }
+}
+
+/** Later submissions win: a tutor who resubmits a week should replace the first answer. */
+function mergeSubmissions(existing, incoming) {
+  const byId = new Map(existing.map((s) => [s.id, s]));
+  let replaced = 0;
+  for (const s of incoming) {
+    if (byId.has(s.id)) replaced++;
+    byId.set(s.id, s);
+  }
+  return { merged: [...byId.values()], replaced };
+}
+
+async function handleFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+
   const status = $('#up-status');
   const err = $('#up-error');
+  const log = $('#up-log');
   err.hidden = true;
   status.hidden = false;
-  const progress = (m) => { status.textContent = m; };
-  progress('Reading ' + file.name + '…');
+  log.hidden = false;
+  log.innerHTML = '';
 
-  try {
-    const spreadsheet = /\.(xlsx|xlsm|csv)$/i.test(file.name);
-    const res = spreadsheet ? await readSpreadsheet(file) : await extractFromDocument(file, progress);
-    if (!res.submissions.length) {
-      throw new Error(spreadsheet
-        ? 'No usable submissions in that file. Check it is the Microsoft Forms response export.'
-        : 'No tutor submissions could be read. If that is a blank form template, upload a completed one or the Forms export.');
-    }
-    state.terms = E.aggregateSubmissions(res.submissions);
-    state.method = spreadsheet ? 'spreadsheet' : 'document';
-    state.filename = file.name;
-    state.issues = res.issues ?? [];
-    state.unmapped = res.unmappedHeaders ?? [];
-    state.notes = res.notes ?? [];
-    state.count = res.submissions.length;
-    state.selected = state.terms[0].id;
-    state.setups = Object.fromEntries(state.terms.map((t) => [t.id, E.defaultSetup(t)]));
-    state.reports = {}; state.statuses = {};
-    $('#upload').hidden = true;
-    $('#workspace').hidden = false;
-    render();
-  } catch (e) {
-    status.hidden = true;
-    err.textContent = e?.message || 'Could not read that file.';
-    err.hidden = false;
+  const results = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const prefix = files.length > 1 ? `File ${i + 1} of ${files.length} · ` : '';
+    status.textContent = `${prefix}Reading ${f.name}…`;
+    const line = el('div', 'logline');
+    line.innerHTML = `<span class="spin">●</span> ${esc(f.name)}`;
+    log.append(line);
+
+    const res = await readOne(f, (m) => { status.textContent = prefix + m; });
+    results.push(res);
+    line.className = 'logline ' + (res.ok ? 'ok' : 'bad');
+    line.innerHTML = res.ok
+      ? `<span class="mark">✓</span> ${esc(res.name)} <span class="dim">${res.count} submission${res.count === 1 ? '' : 's'}</span>`
+      : `<span class="mark">✕</span> ${esc(res.name)} <span class="dim">${esc(res.error)}</span>`;
   }
+
+  status.hidden = true;
+  const good = results.filter((r) => r.ok);
+
+  if (!good.length) {
+    err.textContent = files.length === 1
+      ? (results[0].error || 'Could not read that file.')
+      : 'None of those files contained readable tutor submissions.';
+    err.hidden = false;
+    return;
+  }
+
+  const { merged, replaced } = mergeSubmissions(state.submissions, good.flatMap((r) => r.submissions));
+  state.submissions = merged;
+  state.files = [...state.files, ...results];
+  state.issues = [...state.issues, ...good.flatMap((r) => r.issues)];
+  state.notes = [...state.notes, ...good.flatMap((r) => r.notes)];
+  state.method = state.files.some((f) => f.ok && f.kind === 'document') ? 'document' : 'spreadsheet';
+  state.terms = E.aggregateSubmissions(state.submissions);
+
+  // Keep the current student selected when more files are added to an open session.
+  if (!state.terms.some((t) => t.id === state.selected)) state.selected = state.terms[0].id;
+  for (const t of state.terms) if (!state.setups[t.id]) state.setups[t.id] = E.defaultSetup(t);
+
+  $('#upload').hidden = true;
+  $('#workspace').hidden = false;
+  render();
+
+  const failed = results.filter((r) => !r.ok).length;
+  const bits = [`${good.length} file${good.length === 1 ? '' : 's'} read`];
+  if (replaced) bits.push(`${replaced} submission${replaced === 1 ? '' : 's'} updated`);
+  if (failed) bits.push(`${failed} could not be read`);
+  if (files.length > 1 || failed || replaced) toast(bits.join(' · '));
 }
 
 /* ---------- rendering ---------- */
@@ -185,7 +251,10 @@ function render() {
   const setup = state.setups[state.selected];
   const locked = status === 'approved' || status === 'exported';
 
-  $('#file-label').textContent = `${state.filename} · ${state.count} submissions`;
+  const ok = state.files.filter((f) => f.ok);
+  $('#file-label').textContent =
+    `${ok.length} file${ok.length === 1 ? '' : 's'} · ${state.submissions.length} submissions · ${state.terms.length} students`;
+  $('#file-label').title = ok.map((f) => `${f.name} (${f.count})`).join('\n');
 
   // students
   const list = $('#students'); list.innerHTML = '';
@@ -232,8 +301,17 @@ function render() {
   }[status];
   $('#approve').hidden = status !== 'draft';
   $('#reopen').hidden = !locked;
-  $('#print').hidden = !locked;
-  $('#save').hidden = !locked || !downloads;
+  // Visible from the moment a draft exists, so the route out is discoverable —
+  // but disabled until a person approves. Hiding them read as broken, not locked.
+  const exportable = !!report;
+  const why = locked ? '' : 'Approve the report first';
+  for (const id of ['#print', '#save']) {
+    const b = $(id);
+    b.hidden = !exportable;
+    b.disabled = !locked;
+    b.title = why;
+  }
+  $('#save').hidden = !exportable || !downloads;
 
   const note = $('#note');
   if (report?.provenance) {
@@ -245,6 +323,7 @@ function render() {
   }
 
   $('#empty').hidden = !!report;
+  $('#edit-hint').hidden = !report || locked;
   $('#empty-hint').textContent = `Check ${term.studentName.split(' ')[0]}'s submissions on the left, fill in the report details, then generate a draft. Nothing is exported until a member of staff approves it.`;
   $('#paper').hidden = !report;
   if (report) renderReport(report, locked);
@@ -277,6 +356,19 @@ function renderSetup(term, setup, disabled) {
   box.append(subs);
 }
 
+/** A single-line inline editor for a label or heading. */
+function line(value, readOnly, onInput, aria, cls) {
+  const n = el('span', 'rl' + (cls ? ' ' + cls : ''));
+  n.textContent = value ?? '';
+  n.setAttribute('aria-label', aria);
+  if (!readOnly) {
+    n.contentEditable = 'plaintext-only';
+    n.spellcheck = false;
+    n.addEventListener('input', () => onInput(n.textContent));
+  }
+  return n;
+}
+
 function field(value, readOnly, onInput, aria) {
   const t = el('textarea', 'rf'); t.value = value ?? ''; t.readOnly = readOnly; t.rows = 1;
   t.setAttribute('aria-label', aria);
@@ -297,34 +389,96 @@ function listField(items, readOnly, onInput, aria) {
 
 function renderReport(report, locked) {
   const { setup, content, matrix, attendance } = report;
+  const L = report.labels;
   const subjects = matrix.map((m) => m.subject);
   const root = $('#paper'); root.innerHTML = '';
+  const relabel = () => { /* labels mutate in place; nothing else to recompute */ };
 
-  const page = () => { const p = el('section', 'sheet'); root.append(p);
-    p.innerHTML = `<img class="rlogo" src="smk-logo.svg" alt="SMK Gateway">`; return p; };
+  const page = () => {
+    const p = el('section', 'sheet');
+    const logoWrap = el('div', 'rlogo-wrap');
+    const img = el('img', 'rlogo');
+    img.src = report.logo || 'smk-logo.svg';
+    img.alt = 'SMK Gateway';
+    logoWrap.append(img);
+    if (!locked) {
+      const swap = el('button', 'logo-swap', 'Replace logo');
+      swap.type = 'button';
+      swap.onclick = () => $('#logo-input').click();
+      logoWrap.append(swap);
+    }
+    p.append(logoWrap);
+    root.append(p);
+    return p;
+  };
 
-  const foot = (p) => { p.insertAdjacentHTML('beforeend',
-    `<div class="rfoot"><div class="rfoot-row"><span><i>&#9679;</i> Ground Floor, 599 Avebury Boulevard, Milton Keynes MK9 3HR</span><span><i>&#9679;</i> 07908 166 261</span><span><i>&#9679;</i> info@sievemk.org.uk</span></div><div class="rlegal">A company limited by guarantee (number 7886477) and a Registered Charity (number 1146451)</div></div>`); };
+  const foot = (p) => {
+    const f = el('div', 'rfoot');
+    const row = el('div', 'rfoot-row');
+    const item = (key, aria) => {
+      const sp = el('span');
+      sp.innerHTML = '<i>&#9679;</i> ';
+      sp.append(line(L[key], locked, (v) => { L[key] = v; }, aria, 'tiny'));
+      return sp;
+    };
+    row.append(item('footerAddress', 'Footer address'), item('footerPhone', 'Footer phone'), item('footerEmail', 'Footer email'));
+    f.append(row);
+    const legal = el('div', 'rlegal');
+    legal.append(line(L.footerLegal, locked, (v) => { L.footerLegal = v; }, 'Footer legal line', 'tiny'));
+    f.append(legal);
+    p.append(f);
+  };
 
-  // page 1
+  /* ---- page 1 ---- */
   const p1 = page();
-  p1.insertAdjacentHTML('beforeend', `<div class="rtitle"><div>INTERIM TERMLY REPORT</div><div>REPORTING DATE: ${esc(setup.reportingDateLabel)}</div></div>
-    <div class="rmeta"><div>STUDENT: ${esc(report.studentName.toUpperCase())}</div><div>YEAR: ${esc(setup.year || '—')}</div>
-    <div>ACADEMIC YEAR: ${esc(setup.academicYear)}</div><div>TERM: ${esc(setup.termLabel)}</div></div>
-    <div class="rlabel">OVERVIEW</div>`);
+  const title = el('div', 'rtitle');
+  const t1 = el('div'); t1.append(line(L.title1, locked, (v) => { L.title1 = v; }, 'Report title'));
+  const t2 = el('div');
+  t2.append(line(L.title2, locked, (v) => { L.title2 = v; }, 'Reporting date label'));
+  t2.append(document.createTextNode(' '));
+  t2.append(line(setup.reportingDateLabel, locked, (v) => { setup.reportingDateLabel = v; }, 'Reporting date'));
+  title.append(t1, t2);
+  p1.append(title);
+
+  const meta = el('div', 'rmeta');
+  const metaRow = (labelKey, value, onValue, aria) => {
+    const d = el('div');
+    d.append(line(L[labelKey], locked, (v) => { L[labelKey] = v; }, aria + ' label'));
+    d.append(document.createTextNode(': '));
+    d.append(line(value, locked, onValue, aria));
+    return d;
+  };
+  meta.append(
+    metaRow('student', report.studentName.toUpperCase(), (v) => { report.studentName = v; }, 'Student'),
+    metaRow('year', setup.year || '—', (v) => { setup.year = v; }, 'Year'),
+    metaRow('academicYear', setup.academicYear, (v) => { setup.academicYear = v; }, 'Academic year'),
+    metaRow('term', setup.termLabel, (v) => { setup.termLabel = v; }, 'Term'),
+  );
+  p1.append(meta);
+
+  const ovLabel = el('div', 'rlabel');
+  ovLabel.append(line(L.overview, locked, (v) => { L.overview = v; }, 'Overview heading'));
+  p1.append(ovLabel);
   p1.append(field(content.overview, locked, (v) => { content.overview = v; }, 'Overview'));
   foot(p1);
 
-  // page 2 — matrix
+  /* ---- page 2: the matrix ---- */
   const p2 = page();
   const table = el('table', 'matrix');
-  table.innerHTML = `<thead><tr><th>Subject and Tier</th><th>Attitude To Learning</th><th>Behaviour For Learning</th>
-    <th>Contribution In Lessons</th><th>Curriculum Strengths</th><th>Curriculum Areas For Development</th>
-    <th>Average score/grade on tests and mocks</th><th>Tutor Assessed Progress</th></tr></thead>`;
+  const thead = el('thead'); const htr = el('tr');
+  L.matrix.forEach((h, i) => {
+    const th = el('th');
+    th.append(line(h, locked, (v) => { L.matrix[i] = v; }, `Column heading ${i + 1}`));
+    htr.append(th);
+  });
+  thead.append(htr); table.append(thead);
+
   const tb = el('tbody');
   matrix.forEach((r) => {
     const tr = el('tr');
-    tr.append(el('td', null, E.subjectWithTier(r.subject, r.tier)));
+    const first = el('td');
+    first.append(line(E.subjectWithTier(r.subject, r.tier), locked, (v) => { r.subject = v; r.tier = ''; }, `Subject, ${r.subject}`));
+    tr.append(first);
     const cell = (key, aria) => { const td = el('td'); td.append(field(r[key], locked, (v) => { r[key] = v; }, aria)); return td; };
     tr.append(cell('attitudeToLearning', `Attitude, ${r.subject}`), cell('behaviourForLearning', `Behaviour, ${r.subject}`),
       cell('contributionInLessons', `Contribution, ${r.subject}`), cell('curriculumStrengths', `Strengths, ${r.subject}`),
@@ -334,51 +488,85 @@ function renderReport(report, locked) {
   });
   table.append(tb); p2.append(table); foot(p2);
 
-  // page 3 — attendance + cognition
+  /* ---- page 3: attendance + cognition ---- */
   const p3 = page();
   const d3 = el('table', 'detail'); const b3 = el('tbody');
+
   const attTd = el('td');
   attTd.append(field(content.attendanceNarrative, locked, (v) => { content.attendanceNarrative = v; }, 'Attendance narrative'));
-  attTd.insertAdjacentHTML('beforeend', `<table class="att"><thead><tr><th>Week beginning</th><th>Subjects</th><th>Attendance</th><th>Punctuality</th></tr></thead><tbody>
-    ${attendance.summary.map((w) => `<tr><td>${fmtWeek(w.weekBeginning)}</td><td>${esc(w.subjects.join(', '))}</td><td>${ATT[w.attendance]}</td><td>${w.punctuality ?? '—'}</td></tr>`).join('')}
-    <tr><td colspan="2"><strong>Total</strong></td><td colspan="2"><strong>${attendance.fullWeeks} of ${attendance.distinctWeeks} weeks in full</strong></td></tr></tbody></table>`);
-  const r3a = el('tr'); r3a.append(labCell('Attendance'), attTd); b3.append(r3a);
+  const att = el('table', 'att');
+  const ahead = el('thead'); const ahr = el('tr');
+  L.attendanceCols.forEach((h, i) => {
+    const th = el('th');
+    th.append(line(h, locked, (v) => { L.attendanceCols[i] = v; }, `Attendance column ${i + 1}`));
+    ahr.append(th);
+  });
+  ahead.append(ahr); att.append(ahead);
+  const ab = el('tbody');
+  attendance.summary.forEach((w, i) => {
+    const tr = el('tr');
+    const cells = [fmtWeek(w.weekBeginning), w.subjects.join(', '), ATT[w.attendance], w.punctuality ?? '—'];
+    cells.forEach((text, c) => {
+      const td = el('td');
+      td.append(line(text, locked, () => { /* display-only override; figures come from the forms */ }, `Attendance row ${i + 1} cell ${c + 1}`));
+      td.firstChild.contentEditable = locked ? 'false' : 'plaintext-only';
+      tr.append(td);
+    });
+    ab.append(tr);
+  });
+  const totalTr = el('tr');
+  const tdA = el('td'); tdA.colSpan = 2; tdA.innerHTML = '<strong>Total</strong>';
+  const tdB = el('td'); tdB.colSpan = 2;
+  tdB.innerHTML = `<strong>${attendance.fullWeeks} of ${attendance.distinctWeeks} weeks in full</strong>`;
+  totalTr.append(tdA, tdB); ab.append(totalTr);
+  att.append(ab); attTd.append(att);
+
+  const r3a = el('tr'); r3a.append(labCell(L, 'attendance', locked, 'Attendance heading'), attTd); b3.append(r3a);
+
   const cogTd = el('td');
   cogTd.append(field(content.cognitionAndLearning, locked, (v) => { content.cognitionAndLearning = v; }, 'Cognition and learning'));
-  const r3b = el('tr'); r3b.append(labCell('Cognition and Learning'), cogTd); b3.append(r3b);
+  const r3b = el('tr'); r3b.append(labCell(L, 'cognition', locked, 'Cognition heading'), cogTd); b3.append(r3b);
   d3.append(b3); p3.append(d3); foot(p3);
 
-  // page 4 — successes + challenges
+  /* ---- page 4: successes + challenges ---- */
   const p4 = page();
   const d4 = el('table', 'detail'); const b4 = el('tbody');
   const group = (src, key) => {
     const td = el('td');
-    subjects.forEach((s) => {
-      td.append(el('div', 'subhead', s.toUpperCase()));
-      td.append(listField(src[s], locked, (items) => { src[s] = items; }, `${key} for ${s}`));
+    subjects.forEach((sub) => {
+      const h = el('div', 'subhead');
+      h.append(line(sub.toUpperCase(), locked, () => {}, `${key} subject heading`));
+      td.append(h);
+      td.append(listField(src[sub], locked, (items) => { src[sub] = items; }, `${key} for ${sub}`));
     });
     return td;
   };
-  const r4a = el('tr'); r4a.append(labCell('Successes and Achievements'), group(content.successes, 'successes')); b4.append(r4a);
-  const r4b = el('tr'); r4b.append(labCell('Challenges or Concerns'), group(content.challenges, 'challenges')); b4.append(r4b);
+  const r4a = el('tr'); r4a.append(labCell(L, 'successes', locked, 'Successes heading'), group(content.successes, 'successes')); b4.append(r4a);
+  const r4b = el('tr'); r4b.append(labCell(L, 'challenges', locked, 'Challenges heading'), group(content.challenges, 'challenges')); b4.append(r4b);
   d4.append(b4); p4.append(d4); foot(p4);
 
-  // page 5 — targets + observations
+  /* ---- page 5: targets + observations ---- */
   const p5 = page();
   const d5 = el('table', 'detail'); const b5 = el('tbody');
   const tTd = el('td'); tTd.append(listField(content.targets, locked, (v) => { content.targets = v; }, 'Targets or goals'));
-  const r5a = el('tr'); r5a.append(labCell('Targets or Goals'), tTd); b5.append(r5a);
-  const simple = (label, key, aria) => {
+  const r5a = el('tr'); r5a.append(labCell(L, 'targets', locked, 'Targets heading'), tTd); b5.append(r5a);
+  const simple = (labelKey, key, aria) => {
     const td = el('td'); td.append(field(content[key], locked, (v) => { content[key] = v; }, aria));
-    const tr = el('tr'); tr.append(labCell(label), td); b5.append(tr);
+    const tr = el('tr'); tr.append(labCell(L, labelKey, locked, aria + ' heading'), td); b5.append(tr);
   };
-  simple('Communication and Interaction', 'communicationAndInteraction', 'Communication and interaction');
-  simple('Social, Emotional and Mental Health', 'socialEmotionalMentalHealth', 'Social, emotional and mental health');
-  simple('Sensory and/or Physical Observations', 'sensoryPhysical', 'Sensory and physical observations');
+  simple('communication', 'communicationAndInteraction', 'Communication and interaction');
+  simple('semh', 'socialEmotionalMentalHealth', 'Social, emotional and mental health');
+  simple('sensory', 'sensoryPhysical', 'Sensory and physical observations');
   d5.append(b5); p5.append(d5); foot(p5);
+
+  relabel();
 }
 
-function labCell(text) { const td = el('td', 'lab', text); return td; }
+function labCell(L, key, locked, aria) {
+  const td = el('td', 'lab');
+  td.append(line(L[key], locked, (v) => { L[key] = v; }, aria));
+  return td;
+}
 
 /* ---------- generation ---------- */
 function promptFor(term) {
@@ -460,7 +648,11 @@ async function generate() {
 
   if (sample) {
     try {
-      content = coerce(await sample.json(promptFor(term), { modelTier: 'complex' }), term, fallback);
+      // Names never reach the model: it writes about "Student A", and the real
+      // names are put back here. See pseudonymise() in engine.js.
+      const { term: masked, pseudonym } = E.pseudonymise(term);
+      const raw = await sample.json(promptFor(masked), { modelTier: 'complex' });
+      content = coerce(E.rehydrate(raw, pseudonym), term, fallback);
       templated = false;
     } catch (e) {
       note = (e?.code === 'not_granted' ? 'Claude access was declined' : e?.message || 'Claude could not draft this') + ' — drafted from the offline template instead.';
@@ -469,13 +661,17 @@ async function generate() {
     note = 'Claude is not available in this view — drafted from the offline template.';
   }
 
+  const existing = state.reports[state.selected];
   state.reports[state.selected] = {
     studentId: term.id, studentName: term.studentName, setup,
+    labels: existing?.labels ?? E.defaultLabels(),
+    logo: existing?.logo ?? state.logo ?? null,
+    risks: E.findResidualRisks(term),
     matrix: E.buildMatrix(term, setup, content), content,
     attendance: term.attendance, templateGenerated: templated,
     provenance: templated
       ? (note || 'Assembled offline from the tutors\u2019 own words \u2014 no model was used.')
-      : 'Drafted by Claude from the tutor submissions, using your Claude account. Check every section before approving.',
+      : 'Drafted by Claude from the tutor submissions. Names were replaced with \u201cStudent A\u201d before sending and restored here. Check every section before approving.',
   };
   state.statuses[state.selected] = 'draft';
   render();
@@ -484,6 +680,8 @@ async function generate() {
 /* ---------- export ---------- */
 function reportHtml(report) {
   const clone = $('#paper').cloneNode(true);
+  clone.querySelectorAll('.logo-swap').forEach((b) => b.remove());
+  clone.querySelectorAll('[contenteditable]').forEach((n) => n.removeAttribute('contenteditable'));
   clone.querySelectorAll('textarea').forEach((t) => {
     const d = document.createElement('div'); d.className = 'rf-static';
     t.value.split('\n').forEach((line, i) => { if (i) d.append(document.createElement('br')); d.append(document.createTextNode(line)); });
@@ -499,7 +697,16 @@ function reportHtml(report) {
 .sheet:last-child{page-break-after:auto}
 .prov{max-width:794px;margin:0 auto;padding:14px 48px 40px;font:11px/1.5 Carlito,Calibri,sans-serif;color:#555}
 @media print{.prov{display:none}}
-@page{size:A4;margin:0}</style></head><body><div id="paper">${clone.innerHTML}</div>${prov}</body></html>`;
+@page{size:A4;margin:0}</style></head><body><div id="paper">${clone.innerHTML}</div>${prov}
+<script>
+/* Opens the print dialog once fonts have settled, so the saved file is one step
+   from a PDF. Guarded: a viewer who just wants to read it can cancel. */
+window.addEventListener('load', function () {
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { setTimeout(function () { window.print(); }, 300); });
+  } else { setTimeout(function () { window.print(); }, 600); }
+});
+<\/script></body></html>`;
 }
 
 async function saveHtml() {
@@ -512,7 +719,7 @@ async function saveHtml() {
     });
     state.statuses[state.selected] = 'exported';
     render();
-    toast('Saved. Open it and print to PDF for the letterhead copy.');
+    toast('Saved. Open the file — it opens the print dialog, then choose Save as PDF.');
   } catch (e) {
     if (e?.code !== 'cancelled') toast(e?.message || 'Could not save the file.');
   }
@@ -526,11 +733,12 @@ function toast(msg) {
 /* ---------- wiring ---------- */
 const input = $('#file-input');
 $('#choose').onclick = () => input.click();
-input.onchange = () => { const f = input.files?.[0]; if (f) handleFile(f); input.value = ''; };
+input.onchange = () => { if (input.files?.length) handleFiles(input.files); input.value = ''; };
 const drop = $('#dropzone');
 drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); });
+drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files); });
 
 $('#generate').onclick = generate;
 $('#approve').onclick = () => {
@@ -539,6 +747,40 @@ $('#approve').onclick = () => {
   toast(`${state.terms.find((t) => t.id === state.selected).studentName.split(' ')[0]}'s report approved`);
 };
 $('#reopen').onclick = () => { state.statuses[state.selected] = 'draft'; render(); };
-$('#print').onclick = () => window.print();
+$('#print').onclick = () => {
+  // No way to detect a blocked print: window.print() returns nothing either way.
+  // So attempt it, and say what to do if the dialog never appears.
+  try { window.print(); } catch { /* sandboxed */ }
+  setTimeout(() => {
+    toast(downloads
+      ? 'No print dialog? This page is sandboxed — use Download instead; the file opens ready to print.'
+      : 'No print dialog? This page is sandboxed. Open the report in the full app to export a PDF.');
+  }, 1200);
+};
 $('#save').onclick = saveHtml;
-$('#restart').onclick = () => { $('#workspace').hidden = true; $('#upload').hidden = false; $('#up-status').hidden = true; };
+$('#add-more').onclick = () => input.click();
+
+const logoInput = $('#logo-input');
+logoInput.onchange = () => {
+  const f = logoInput.files?.[0];
+  logoInput.value = '';
+  if (!f) return;
+  if (f.size > 2 * 1024 * 1024) return toast('That image is over 2 MB — use a smaller one.');
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.logo = reader.result;
+    const r = state.reports[state.selected];
+    if (r) { r.logo = reader.result; render(); }
+    toast('Logo replaced. It applies to reports you generate from now on too.');
+  };
+  reader.readAsDataURL(f);
+};
+$('#restart').onclick = () => {
+  Object.assign(state, { terms: [], selected: '', setups: {}, reports: {}, statuses: {},
+    submissions: [], files: [], issues: [], notes: [] });
+  $('#workspace').hidden = true;
+  $('#upload').hidden = false;
+  $('#up-status').hidden = true;
+  $('#up-log').hidden = true;
+  $('#up-error').hidden = true;
+};

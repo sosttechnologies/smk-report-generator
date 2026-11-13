@@ -444,3 +444,141 @@ export function generateFromTemplate(term) {
     sensoryPhysical: 'No specific sensory or physical observations have been recorded in the tutor submissions for this reporting period. Please review and amend if staff hold additional context.',
   };
 }
+
+
+/* ---------------- editable document chrome ---------------- */
+
+/**
+ * Every fixed string in the report, so staff can change any of it.
+ * Held on the report rather than hard-coded, which means edits survive into the
+ * downloaded file and SMK can adjust their own wording without a code change.
+ */
+export function defaultLabels() {
+  return {
+    title1: 'INTERIM TERMLY REPORT',
+    title2: 'REPORTING DATE:',
+    student: 'STUDENT',
+    year: 'YEAR',
+    academicYear: 'ACADEMIC YEAR',
+    term: 'TERM',
+    overview: 'OVERVIEW',
+    matrix: [
+      'Subject and Tier', 'Attitude To Learning', 'Behaviour For Learning',
+      'Contribution In Lessons', 'Curriculum Strengths', 'Curriculum Areas For Development',
+      'Average score/grade on tests and mocks', 'Tutor Assessed Progress',
+    ],
+    attendance: 'Attendance',
+    attendanceCols: ['Week beginning', 'Subjects', 'Attendance', 'Punctuality'],
+    cognition: 'Cognition and Learning',
+    successes: 'Successes and Achievements',
+    challenges: 'Challenges or Concerns',
+    targets: 'Targets or Goals',
+    communication: 'Communication and Interaction',
+    semh: 'Social, Emotional and Mental Health',
+    sensory: 'Sensory and/or Physical Observations',
+    footerAddress: 'Ground Floor, 599 Avebury Boulevard, Milton Keynes MK9 3HR',
+    footerPhone: '07908 166 261',
+    footerEmail: 'info@sievemk.org.uk',
+    footerLegal: 'A company limited by guarantee (number 7886477) and a Registered Charity (number 1146451)',
+  };
+}
+
+/* ---------------- pseudonymisation ---------------- */
+
+/**
+ * Replaces student and tutor names with tokens before anything is sent to a model,
+ * and puts them back in the answer. Mirrors src/lib/pseudonymise.ts in the server app.
+ *
+ * This is NOT anonymisation: pseudonymised data is still personal data under UK GDPR,
+ * because the mapping that reverses it lives in this page. It demonstrates data
+ * minimisation; it removes no legal obligation.
+ *
+ * It applies to DRAFTING only. Reading a PDF or Word file cannot be pseudonymised —
+ * the names are the thing the model is being asked to read.
+ */
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function pseudonymise(term) {
+  const studentToken = 'Student A';
+  const map = { [studentToken]: term.studentName };
+  const pairs = [];
+
+  const full = String(term.studentName).trim().replace(/\s+/g, ' ');
+  pairs.push([full, studentToken]);
+  for (const part of full.split(' ')) if (part.length > 2) pairs.push([part, studentToken]);
+
+  const tutors = [...new Set(term.submissions.map((s) => s.instructorName).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  tutors.forEach((tutor, i) => {
+    const token = `Tutor ${i + 1}`;
+    map[token] = tutor;
+    pairs.push([tutor, token]);
+    for (const piece of tutor.split(/[.\s]+/)) if (piece.length > 2) pairs.push([piece, token]);
+  });
+
+  pairs.sort((a, b) => b[0].length - a[0].length);
+  const scrub = (text) => {
+    let out = String(text ?? '');
+    for (const [real, token] of pairs) out = out.replace(new RegExp(`\\b${escapeRe(real)}\\b`, 'gi'), token);
+    return out;
+  };
+
+  const masked = {
+    ...term,
+    id: 'student-a',
+    studentName: studentToken,
+    submissions: term.submissions.map((s, i) => ({
+      ...s,
+      id: `student-a|${s.subject}|${s.weekBeginning}|${i}`,
+      studentName: studentToken,
+      instructorName: `Tutor ${tutors.indexOf(s.instructorName) + 1}`,
+      concerns: scrub(s.concerns), keyActions: scrub(s.keyActions), generalComments: scrub(s.generalComments),
+    })),
+    subjects: term.subjects.map((sub) => ({
+      ...sub,
+      instructors: sub.instructors.map((t) => `Tutor ${tutors.indexOf(t) + 1}`),
+      concerns: sub.concerns.map(scrub), keyActions: sub.keyActions.map(scrub),
+      generalComments: sub.generalComments.map(scrub),
+    })),
+  };
+
+  return { term: masked, pseudonym: { map } };
+}
+
+export function rehydrate(value, pseudonym) {
+  const pairs = Object.entries(pseudonym.map).sort((a, b) => b[0].length - a[0].length);
+  const walk = (node) => {
+    if (typeof node === 'string') {
+      let out = node;
+      for (const [token, real] of pairs) out = out.replace(new RegExp(escapeRe(token), 'g'), real);
+      return out;
+    }
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === 'object') return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, walk(v)]));
+    return node;
+  };
+  return walk(value);
+}
+
+const RISK_PATTERNS = [
+  [/\b(?:\d{1,4}\s+)?[A-Z][a-z]+\s(?:Road|Street|Avenue|Lane|Close|Drive|Way|Court)\b/, 'Looks like an address'],
+  [/\b[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}\b/, 'Looks like a postcode'],
+  [/\b(?:07\d{9}|\+44\s?\d{10})\b/, 'Looks like a phone number'],
+  [/\b[\w.+-]+@[\w-]+\.[\w.]+\b/, 'Contains an email address'],
+  [/\b(?:mum|mother|dad|father|parent|carer|guardian|brother|sister|sibling|grandma|grandad)\b/i, 'Mentions a family member'],
+  [/\b(?:diagnos|medicat|prescri|autis|dyslex|anxiet|depress|therap)\w*/i, 'Health detail — Article 9 special category data'],
+  [/\b(?:ADHD|ASD|SEN|SEND|EHCP|CAMHS|IEP)\b/, 'SEND or health acronym — Article 9 special category data'],
+  [/\b(?:social worker|safeguarding|child protection|looked after)\b/i, 'Safeguarding language — review before sending'],
+];
+
+export function findResidualRisks(term) {
+  const out = [];
+  for (const subject of term.subjects) {
+    for (const text of [...subject.generalComments, ...subject.concerns, ...subject.keyActions]) {
+      for (const [re, reason] of RISK_PATTERNS) {
+        if (re.test(text)) { out.push({ subject: subject.subject, text, reason }); break; }
+      }
+    }
+  }
+  return out;
+}
