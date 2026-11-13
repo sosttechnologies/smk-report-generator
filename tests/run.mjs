@@ -13,7 +13,9 @@ import { serve } from './server.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const only = process.argv[2];
 const suites = fs.readdirSync(here)
-  .filter((f) => /^\d\d-.*\.mjs$/.test(f))
+  // 0x and 1x suites run against the static build here; 2x suites need the
+  // full backend and are driven by run-web.mjs instead.
+  .filter((f) => /^[01]\d-.*\.mjs$/.test(f))
   .filter((f) => !only || f.includes(only))
   .sort();
 
