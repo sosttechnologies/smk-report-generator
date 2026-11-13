@@ -112,6 +112,13 @@ upload produce many reports** — one row each with name, key stage and an inclu
 the button reads "Generate N reports". **Clicking a read file previews everything that came
 out of it**, grouped by student, with ratings as chips and comments verbatim.
 
+**SMK's own Word and PDF reports are read with no model** (`E.parseWeeklyReports` in
+`extractDoc`, see `smk-form-schema`). `extractDoc` tries the parser first and only asks
+`sample` when the text matches neither SMK layout; with no `sample` it fails with a message
+naming the SMK template and the Forms export. The user's requirement, verbatim: "we don't
+need a model, I know for sure this can be done 100%" — never reintroduce a key requirement
+for SMK's own documents.
+
 ### Share & export
 Page picker first (all, or any subset; rows are `<div>`, not `<label>` — see below), then
 Print · Download Word · Download PDF · Email. Export is gated on every section being

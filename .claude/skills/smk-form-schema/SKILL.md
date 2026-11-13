@@ -40,9 +40,29 @@ but the spelling drifts between exports. So:
 ## Two ingestion paths
 
 - **`.xlsx` / `.csv`** → `src/lib/parse.ts`. Deterministic, no model, works with no API key.
-- **`.pdf` / `.docx` / text / images** → `src/lib/ingest/extract.ts`. Claude reads the document
-  into the same row shape using structured outputs. **Requires an API key; there is no fallback.**
-  Extracted rows are flagged in the UI so staff check them against the original.
+- **`.pdf` / `.docx` / text in SMK's own layouts** → `parseWeeklyReports()` in
+  `artifact2/engine.js` (twin: `src/lib/parseWeekly.ts`). **Deterministic, no model, no key.**
+  The browser gets flat text from mammoth or pdf.js and the parser finds each field by its
+  label. Two layouts are recognised, and one file may hold several reports:
+  - **A. "WEEKLY PROGRESS REPORT"** — the Word document. `STUDENT:` / `INSTRUCTOR:` /
+    `SUBJECT:` / `WEEK COMMENCING dd/MM/yyyy`; a `PERFORMANCE & ENGAGEMENT MATRIX` of
+    label→rating pairs (`Preparation for class`, `Meets deadlines`, `Applies knowledge to new
+    concepts` map onto the form's row names; `Overall Engagement` is ignored); then headed
+    sections. `Strengths & Achievements` + `INSTRUCTOR GENERAL COMMENTS` (+ attendance
+    observations, + access arrangements) → generalComments; `Key Concerns` → concerns;
+    `Agreed Action Plan` → keyActions. Headings arrive glued (`&PUNCTUALITY`,
+    `REPORTREPORTING`) so every pattern tolerates missing spaces.
+  - **B. "SMK STUDENT PROGRESS REPORT"** — the Microsoft Form printed to PDF. Questions
+    `1.`–`10.`; the grids are rows of radio marks (● chosen, ○ not) under the column headings
+    `EXCELLENT GOOD AVERAGE POOR [NOT APPLICABLE]`, so a rating is the column at the index of
+    the ● mark. Attendance is the option preceded by ●. Running headers/footers
+    (`SMK Student Progress Report … Page N`) are stripped first.
+  Change the Word or Form template and this parser must change with it — `tests/15` builds
+  both layouts on the fly and is the regression check.
+- **images, or any other document layout** → the model, via `/api/llm` (server twin
+  `src/lib/ingest/extract.ts`). Needs a key. Extracted rows are flagged in the preview
+  ("Read by the model — check it against the original"); rows from the parser are labelled
+  "no model involved".
 
 ## Rating arithmetic
 

@@ -54,9 +54,10 @@ npm run test:web  # the self-hosted app: template path, then a fake model server
 `npm test` drives a real Chromium through the whole app. It is the gate — run it before any
 publish. Suites live in `tests/`; `node tests/run.mjs 03` runs one.
 
-Copy `.env.example` to `.env.local` and set `ANTHROPIC_API_KEY` for Claude drafting.
-Without it the app still works: generation falls back to a deterministic template.
-PDF/Word ingestion does **not** have a fallback and needs the key.
+Copy `.env.example` to `.env.local` and set a key for model drafting (see "Which model").
+Without one the app still works end to end: SMK's own Word and PDF reports are read by
+matching their fixed layout, and generation falls back to a deterministic template. Only
+**images** and documents in some *other* layout need a model.
 
 ## Deployment
 
@@ -117,12 +118,14 @@ App shell, tokens and state model: `.claude/skills/smk-app-design/SKILL.md`.
 **Output** — one report per student per term: an overview page, an 8-column subject matrix,
 then eight label/body sections. See `.claude/skills/smk-report-format/SKILL.md`.
 
-Two ingestion paths, dispatched in `src/lib/ingest/index.ts`:
+Three ingestion paths (browser: `readSpreadsheet` / `extractDoc` in `artifact2/app.js`;
+server twins in `src/lib/`):
 
 | Upload | Path | Notes |
 |---|---|---|
-| `.xlsx` `.csv` | `src/lib/parse.ts` | Deterministic. Fuzzy header matching, no model. |
-| `.pdf` `.docx` `.txt` images | `src/lib/ingest/extract.ts` | Claude reads it into rows. Needs a key; staff must check the result. |
+| `.xlsx` `.csv` | `parse.ts` / `engine.js rowsToSubmissions` | Deterministic. Fuzzy header matching, no model. |
+| `.pdf` `.docx` `.txt` in SMK's layouts | `parseWeekly.ts` / `engine.js parseWeeklyReports` | **Deterministic, no model.** Matches the labels of the two fixed templates SMK use (the headed Word report and the Microsoft Form printed to PDF). Text comes from mammoth / pdf.js in the browser; nothing leaves it. Several reports per file are fine. |
+| images, or documents in any other layout | `/api/llm` via `extractDoc` (server: `ingest/extract.ts`) | A model reads it into rows. Needs a key; staff must check the result. Without a key the file fails with a message saying to use the SMK template or the Forms export. |
 
 Both converge on `aggregateSubmissions()` in `src/lib/aggregate.ts`, then generation, then
 `buildReport()` in `src/lib/report.ts`.

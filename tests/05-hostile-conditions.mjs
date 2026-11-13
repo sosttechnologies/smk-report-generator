@@ -1,4 +1,5 @@
 /* hostile conditions. */
+import fs from 'node:fs';
 import puppeteer from 'puppeteer';
 import { loadSampleSingle } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
@@ -20,18 +21,26 @@ const sample = async (p) => {
 
 console.log('\n=== real user files: Word and PDF ===');
 let p = await page();
-const inp = await p.$('#file-input');
-await inp.uploadFile(
+// SMK's own Word and PDF reports are read by matching the template, so with no
+// model present they still succeed. These two live outside the repo (they carry
+// names), so the check is skipped where they are absent.
+const realDocs = [
   '/Users/preciousjoshua/Downloads/Amara_Okafor_Progress_Report.docx',
   '/Users/preciousjoshua/Downloads/SMK_Progress_Report_Amara_Okafor_Sample.pdf',
-);
-await p.waitForFunction(() => {
-  const r = [...document.querySelectorAll('.frow .st')];
-  return r.length === 2 && r.every((x) => !x.textContent.includes('Reading'));
-}, { timeout: 60000 });
-const msgs = await p.$$eval('.frow .st', (n) => n.map((x) => x.title || x.textContent));
-t('both files handled without crashing', true, msgs.join(' | ').slice(0, 110));
-t('failure explains what to do', msgs.join(' ').includes('Forms .xlsx'));
+].filter((f) => fs.existsSync(f));
+if (realDocs.length === 2) {
+  const inp = await p.$('#file-input');
+  await inp.uploadFile(...realDocs);
+  await p.waitForFunction(() => {
+    const r = [...document.querySelectorAll('.frow .st')];
+    return r.length === 2 && r.every((x) => !x.textContent.includes('Reading'));
+  }, { timeout: 60000 });
+  const msgs = await p.$$eval('.frow .st', (n) => n.map((x) => x.title || x.textContent));
+  t('both files handled without crashing', true, msgs.join(' | ').slice(0, 110));
+  t('both SMK documents read with no model', msgs.every((m) => m === '✓ Read'), msgs.join(' | '));
+} else {
+  console.log('   (skipped: sample Word/PDF reports not present on this machine)');
+}
 // the DOCX/PDF text extraction itself (the part that does not need Claude)
 const docxText = await p.evaluate(async () => {
   const r = await fetch('/does-not-matter'); return 1;

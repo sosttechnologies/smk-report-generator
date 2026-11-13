@@ -194,24 +194,35 @@ DOCUMENT:
 `;
 
 async function extractDoc(file, onProgress) {
-  if (!sample) {
-    throw new Error(hosted === 'self'
-      ? 'This server has no model configured yet, so PDF and Word files cannot be read. Add an API key to .env.local and restart — or upload the Microsoft Forms .xlsx or .csv export, which needs no model.'
-      : 'PDF, Word and image files cannot be read in this view. Upload the Microsoft Forms .xlsx or .csv export instead.');
-  }
   const isImg = /\.(png|jpe?g|gif|webp)$/i.test(file.name);
-  let result;
-  if (isImg) {
-    const lim = await sample.limits().catch(() => ({}));
-    if (!lim.images) throw new Error('Images cannot be read in this view. Try a PDF, Word file or the Forms export.');
-    onProgress?.('Reading the image…');
-    result = await sample.json(EXTRACT + '(see attached image)', { images: [file], modelTier: 'complex' });
-  } else {
+
+  // SMK's weekly reports come from one fixed template, so a Word or PDF file is
+  // read by matching its labels — no model, no key, nothing leaves the browser.
+  if (!isImg) {
+    onProgress?.('Reading the document…');
     const text = await documentText(file);
     if (!text.trim()) throw new Error('No readable text. If this is a scanned PDF, upload it as an image instead.');
-    onProgress?.('Reading the document…');
-    result = await sample.json(EXTRACT + text.slice(0, 120000), { modelTier: 'complex' });
+    const parsed = E.parseWeeklyReports(text);
+    if (parsed.length) return { submissions: parsed, issues: [], unmappedHeaders: [], notes: [], parsedLocally: true };
+    if (!sample) {
+      throw new Error('This file does not follow the SMK weekly progress report layout, so it cannot be read without a model. Use the SMK template, or the Microsoft Forms .xlsx/.csv export.');
+    }
+    onProgress?.('Reading the document with the model…');
+    return modelExtract(await sample.json(EXTRACT + text.slice(0, 120000), { modelTier: 'complex' }));
   }
+
+  if (!sample) {
+    throw new Error(hosted === 'self'
+      ? 'Images need a model to read them and this server has none configured. Upload the Word or PDF report instead.'
+      : 'Images cannot be read in this view. Upload the Word or PDF report instead.');
+  }
+  const lim = await sample.limits().catch(() => ({}));
+  if (!lim.images) throw new Error('Images cannot be read in this view. Try a PDF, Word file or the Forms export.');
+  onProgress?.('Reading the image…');
+  return modelExtract(await sample.json(EXTRACT + '(see attached image)', { images: [file], modelTier: 'complex' }));
+}
+
+function modelExtract(result) {
   const rows = Array.isArray(result?.submissions) ? result.submissions : [];
   const clean = (o) => Object.fromEntries(Object.entries(o ?? {}).filter(([, v]) => v && v !== 'Not applicable'));
   const submissions = rows.map((r, i) => {
@@ -247,7 +258,7 @@ async function readOne(file, onProgress) {
   try {
     const r = spread ? await readSpreadsheet(file) : await extractDoc(file, onProgress);
     return {
-      name: file.name, size: file.size, spread, ok: r.submissions.length > 0,
+      name: file.name, size: file.size, spread, ok: r.submissions.length > 0, local: spread || !!r.parsedLocally,
       submissions: r.submissions, issues: r.issues ?? [], notes: r.notes ?? [],
       detail: r.submissions.length
         ? `${r.submissions.length} response${r.submissions.length === 1 ? '' : 's'} · ${[...new Set(r.submissions.map((s) => s.subject))].join(', ')}`
@@ -256,7 +267,7 @@ async function readOne(file, onProgress) {
         : spread ? 'No usable responses — is this the Forms export?' : 'No tutor responses found in this document.',
     };
   } catch (e) {
-    return { name: file.name, size: file.size, spread, ok: false, submissions: [], issues: [], notes: [], detail: '', error: e?.message || 'Could not read this file.' };
+    return { name: file.name, size: file.size, spread, ok: false, local: true, submissions: [], issues: [], notes: [], detail: '', error: e?.message || 'Could not read this file.' };
   }
 }
 
@@ -1164,7 +1175,9 @@ function filePreview(f) {
     textContent: `${f.submissions.length} response${f.submissions.length === 1 ? '' : 's'} · ${byStudent.size} student${byStudent.size === 1 ? '' : 's'}`,
   }));
   if (!f.spread) {
-    head.append(Object.assign(el('span', 'fprev-warn'), { textContent: 'Read from a document — check it against the original' }));
+    head.append(Object.assign(el('span', 'fprev-warn'), {
+      textContent: f.local ? 'Read from the SMK report layout — no model involved' : 'Read by the model — check it against the original',
+    }));
   }
   box.append(head);
 

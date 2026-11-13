@@ -7,10 +7,12 @@
  * one file may hold many submissions. So this path asks Claude to read the document
  * and return structured rows, validated against a schema.
  *
- * Two consequences staff need to know, surfaced in the UI:
- *   1. This path REQUIRES an API key — there is no deterministic fallback.
- *   2. Extraction can misread a document. Every extracted row is shown for checking
- *      before a report is generated from it.
+ * SMK's own weekly report layouts (see ../parseWeekly.ts) are read deterministically
+ * first — no key, nothing sent anywhere. The model is only asked about documents
+ * that follow neither layout, and only when a key is configured.
+ *
+ * Extraction by the model can misread a document. Every extracted row is shown for
+ * checking before a report is generated from it.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -18,6 +20,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import mammoth from 'mammoth';
 import { z } from 'zod';
 import { canonicalSubject, studentKey } from '../parse';
+import { parseWeeklyReports } from '../parseWeekly';
 import type { ParseResult, WeeklySubmission } from '../types';
 
 const MODEL = 'claude-opus-5';
@@ -122,13 +125,27 @@ async function buildContent(filename: string, buffer: Buffer): Promise<Block[]> 
 
 export class ExtractionUnavailable extends Error {}
 
+/** Flat text for the formats we can read ourselves; null for PDFs and images. */
+async function localText(filename: string, buffer: Buffer): Promise<string | null> {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.docx')) return (await mammoth.extractRawText({ buffer })).value;
+  if (/\.(txt|md|text)$/.test(lower)) return buffer.toString('utf8');
+  return null;
+}
+
 export async function extractFromDocument(
   filename: string,
   buffer: Buffer,
 ): Promise<ParseResult & { notes: string[] }> {
+  const text = await localText(filename, buffer);
+  if (text !== null) {
+    const submissions = parseWeeklyReports(text);
+    if (submissions.length) return { submissions, issues: [], unmappedHeaders: [], notes: [] };
+  }
+
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new ExtractionUnavailable(
-      'Reading PDF, Word and image files needs an ANTHROPIC_API_KEY. Upload the Microsoft Forms Excel or CSV export instead, which is read without a model.',
+      'This file does not follow the SMK weekly report layout, and reading other documents needs an ANTHROPIC_API_KEY. Use the SMK template, or the Microsoft Forms Excel or CSV export.',
     );
   }
 
