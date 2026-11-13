@@ -194,7 +194,11 @@ DOCUMENT:
 `;
 
 async function extractDoc(file, onProgress) {
-  if (!sample) throw new Error('PDF, Word and image files cannot be read in this view. Upload the Microsoft Forms .xlsx or .csv export instead.');
+  if (!sample) {
+    throw new Error(hosted === 'self'
+      ? 'This server has no model configured yet, so PDF and Word files cannot be read. Add an API key to .env.local and restart — or upload the Microsoft Forms .xlsx or .csv export, which needs no model.'
+      : 'PDF, Word and image files cannot be read in this view. Upload the Microsoft Forms .xlsx or .csv export instead.');
+  }
   const isImg = /\.(png|jpe?g|gif|webp)$/i.test(file.name);
   let result;
   if (isImg) {
