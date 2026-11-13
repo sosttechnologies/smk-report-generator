@@ -51,22 +51,30 @@ await p.close();
 console.log('\n=== delete the project a report lives in ===');
 p = await page();
 await sample(p);
-await p.evaluate(() => { document.querySelector('#projects .side-item .dots').click(); });
+await p.evaluate(() => document.querySelector('#new-proj').click());
+await new Promise((r) => setTimeout(r, 300));
+await p.evaluate(() => {
+  const sel = document.querySelector('#screen select');
+  if (sel) { sel.value = [...sel.options].find((o) => o.textContent !== 'No project' && o.value !== '__new__').value; sel.dispatchEvent(new Event('change')); }
+});
+await p.evaluate(() => { document.querySelector('#projects > .side-item .dots').click(); });
 await p.waitForSelector('.menu');
 await p.evaluate(() => [...document.querySelectorAll('.menu button')].find((x) => x.textContent === 'Delete').click());
 await p.waitForSelector('.scrim');
 const body = await p.$eval('.modal p', (x) => x.textContent);
-t('warns how many reports go with it', body.includes('1 report'), body);
+t('says what the project holds', /report/i.test(body), body);
 await p.evaluate(() => [...document.querySelectorAll('.modal button')].find((x) => x.textContent === 'Delete').click());
 await new Promise((r) => setTimeout(r, 400));
-t('falls back to a usable screen', (await p.$eval('#screen', (x) => x.textContent)).includes('Drop in'));
-t('a project still exists', (await p.$$eval('#projects .side-item', (x) => x.length)) === 1);
+t('falls back to a usable screen, not a dead end',
+  !(await p.$eval('#screen', (x) => x.textContent)).includes('no longer exists'),
+  (await p.$eval('#screen', (x) => x.textContent)).trim().slice(0, 40));
+t('project list is now empty', (await p.$$eval('#projects > .side-item', (x) => x.length)) === 0);
 await p.waitForFunction(() => [...document.querySelectorAll('#toast button')].some((x) => x.textContent === 'Undo'), { timeout: 6000 });
 await p.evaluate(() => [...document.querySelectorAll('#toast button')].find((x) => x.textContent === 'Undo').click());
 await new Promise((r) => setTimeout(r, 400));
-t('undo restores project and report', (await p.evaluate(() => {
+t('undo restores the project', (await p.evaluate(() => {
   const d = JSON.parse(localStorage.getItem('smk-report-generator-v1'));
-  return d.projects.length === 2 && d.reports.length === 1;
+  return d.projects.length === 1 && d.reports.length === 1;
 })));
 await p.close();
 

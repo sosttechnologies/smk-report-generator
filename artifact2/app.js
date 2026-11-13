@@ -93,10 +93,13 @@ function load() {
   } catch { /* corrupt store: start fresh rather than crash */ }
 }
 
+/** Projects exist only when someone makes one. A report sits loose in Recents
+ *  until it is explicitly filed, so nothing is hidden in a folder nobody created. */
 function ensureProject() {
-  if (!state.projects.some((p) => !p.archived)) state.projects.push({ id: uid(), name: 'My first project' });
   const active = projectOf(state.activeProject);
-  if (!active || active.archived) state.activeProject = state.projects.find((p) => !p.archived).id;
+  if (!active || active.archived) {
+    state.activeProject = state.projects.find((p) => !p.archived)?.id ?? null;
+  }
   return state.activeProject;
 }
 
@@ -439,7 +442,7 @@ async function runBatch(jobs, meta) {
 
   // Newest first in Recents, but open the first student the user listed.
   for (const r of [...made].reverse()) state.reports.unshift(r);
-  state.expandedProjects[meta.projectId] = true;
+  if (meta.projectId) state.expandedProjects[meta.projectId] = true;
   state.activeReport = made[0].id;
   state.selSection = null;
   state.gen = null;
@@ -576,6 +579,11 @@ function reportRow(r, { dimmed = false, nested = false } = {}) {
         })).concat([{ divider: true }, { label: '+ New project…', run: () => {
           const proj = { id: uid(), name: 'Untitled project' };
           state.projects.push(proj); moveReport(r.id, proj.id);
+          requestAnimationFrame(() => {
+            const row = [...document.querySelectorAll('#projects > .side-item')]
+              .find((n) => n.querySelector('.l1')?.textContent.trim().startsWith('Untitled project'));
+            if (row) renameProject(proj.id, row);
+          });
         } }]) },
       { label: r.unread ? 'Mark as read' : 'Mark as unread', run: () => toggleFlag(r, 'unread', ['Marked unread', 'Marked read']) },
       { divider: true },
@@ -629,7 +637,11 @@ function renderSidebar() {
         { label: open ? 'Collapse' : 'Expand', run: toggle },
         { label: proj.pinned ? 'Unpin' : 'Pin', check: !!proj.pinned, run: () => toggleFlag(proj, 'pinned', [`Pinned “${proj.name}”`, `Unpinned “${proj.name}”`]) },
         { label: 'Rename', run: () => renameProject(proj.id, b) },
-        { label: 'New report here', run: () => { state.activeProject = proj.id; state.upload = null; state.screen = 'upload'; render(); } },
+        { label: 'New report here', run: () => {
+            state.activeProject = proj.id; state.screen = 'upload';
+            state.upload = { files: [], terms: [], rows: [], projectId: proj.id, failed: 0 };
+            render();
+          } },
         { divider: true },
         { label: 'Archive', run: () => archiveProject(proj.id) },
         { label: 'Delete', danger: true, run: () => deleteProject(proj.id) },
@@ -645,6 +657,12 @@ function renderSidebar() {
       for (const r of kids) nest.append(reportRow(r, { nested: true }));
       pc.append(nest);
     }
+  }
+
+  if (!ordered.length && !state.projects.length) {
+    pc.append(Object.assign(el('div', 'nest-empty'), {
+      textContent: 'No projects yet — use + to make one',
+    }));
   }
 
   const archivedProjects = state.projects.filter((p) => p.archived);
@@ -714,6 +732,7 @@ function archiveProject(id) {
   const touched = reportsIn(id).filter((r) => !r.archived);
   touched.forEach((r) => { r.archived = true; });
   if (state.activeProject === id) { state.activeProject = state.projects.find((p) => !p.archived)?.id ?? null; }
+  if (state.screen === 'project') state.screen = state.activeReport ? 'report' : 'upload';
   if (touched.some((r) => r.id === state.activeReport)) { state.activeReport = null; state.screen = 'upload'; }
   ensureProject(); save(); render();
   toast(`Archived “${proj.name}”${touched.length ? ` and ${touched.length} report${touched.length === 1 ? '' : 's'}` : ''}`, () => {
@@ -799,6 +818,8 @@ function deleteProject(id) {
       const removedReports = state.reports.filter((r) => r.projectId === id);
       state.reports = state.reports.filter((r) => r.projectId !== id);
       if (state.activeProject === id) state.activeProject = state.projects[0]?.id ?? null;
+      // Leaving the user on a project screen that no longer exists is a dead end.
+      if (state.screen === 'project') state.screen = state.activeReport ? 'report' : 'upload';
       if (removedReports.some((r) => r.id === state.activeReport)) { state.activeReport = null; state.screen = 'upload'; }
       ensureProject(); save(); render();
       toast(`Deleted “${removedProj.name}”`, () => {
@@ -857,7 +878,7 @@ function renderTop() {
   } else if (state.screen === 'project') {
     crumb(proj?.name ?? 'Project');
   } else if (state.screen === 'upload') {
-    crumb(proj?.name ?? 'Reports', 'New report');
+    crumb(state.upload?.projectId ? projectOf(state.upload.projectId).name : 'Reports', 'New report');
   } else if (state.screen === 'generating') {
     crumb(proj?.name ?? 'Reports', 'Generating');
   }
@@ -866,8 +887,10 @@ function renderTop() {
 /* ================= upload screen ================= */
 function screenUpload() {
   const wrap = el('div', 'col');
-  const proj = projectOf(ensureProject());
-  wrap.append(Object.assign(el('p', 'mono eyebrow'), { textContent: `New report · ${proj.name}` }));
+  const proj = projectOf(state.activeProject);
+  wrap.append(Object.assign(el('p', 'mono eyebrow'), {
+    textContent: proj ? `New report · ${proj.name}` : 'New report',
+  }));
   const h = el('h1', 'display');
   h.append(document.createTextNode("Drop in a student's forms."));
   h.append(Object.assign(el('span', 'alt'), { textContent: 'Get back their termly report.' }));
@@ -922,12 +945,26 @@ function screenUpload() {
       if (f.error) st.title = f.error;
       const x = el('button', 'xbtn', '×');
       x.setAttribute('aria-label', `Remove ${f.name}`);
-      x.onclick = () => { u.files.splice(i, 1); recomputeUpload(); render(); };
+      x.onclick = (e) => { e.stopPropagation(); u.files.splice(i, 1); recomputeUpload(); render(); };
       const bar = el('div', 'bar');
       bar.style.width = f.status === 'reading' ? '55%' : f.ok || f.error ? '100%' : '0';
       if (f.error) bar.style.background = 'var(--priv)';
       row.append(b, mid, st, x, bar);
+
+      // Click a read file to see exactly what came out of it, before anything is
+      // written. For a document that was read by a model, this is the check.
+      if (f.ok) {
+        row.classList.add('clickable');
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.title = 'Click to see what was read from this file';
+        const open = () => { u.preview = u.preview === i ? null : i; render(); };
+        row.onclick = open;
+        row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+        if (u.preview === i) row.classList.add('open');
+      }
       fl.append(row);
+      if (f.ok && u.preview === i) fl.append(filePreview(f));
     });
     wrap.append(fl);
 
@@ -1028,6 +1065,10 @@ function screenUpload() {
         setTimeout(() => nameIn.focus(), 0);
       } else {
         const sel = el('select');
+        const none = el('option', null, 'No project');
+        none.value = '';
+        if (!u.projectId) none.selected = true;
+        sel.append(none);
         for (const proj of state.projects.filter((x) => !x.archived)) {
           const o = el('option', null, proj.name); o.value = proj.id;
           if (proj.id === u.projectId) o.selected = true; sel.append(o);
@@ -1037,7 +1078,7 @@ function screenUpload() {
         sel.append(nw);
         sel.onchange = () => {
           if (sel.value === '__new__') { u.newProject = ''; render(); }
-          else u.projectId = sel.value;
+          else u.projectId = sel.value || null;
         };
         projRow.append(sel);
       }
@@ -1082,6 +1123,60 @@ function screenUpload() {
   foot.append(meta, go);
   wrap.append(foot);
   return wrap;
+}
+
+
+/** What a single uploaded file contributed, grouped by student then subject. */
+function filePreview(f) {
+  const box = el('div', 'fprev');
+  const byStudent = new Map();
+  for (const sub of f.submissions) {
+    const list = byStudent.get(sub.studentName) ?? [];
+    list.push(sub);
+    byStudent.set(sub.studentName, list);
+  }
+
+  const head = el('div', 'fprev-head');
+  head.append(Object.assign(el('span', 'mono'), {
+    textContent: `${f.submissions.length} response${f.submissions.length === 1 ? '' : 's'} · ${byStudent.size} student${byStudent.size === 1 ? '' : 's'}`,
+  }));
+  if (!f.spread) {
+    head.append(Object.assign(el('span', 'fprev-warn'), { textContent: 'Read from a document — check it against the original' }));
+  }
+  box.append(head);
+
+  for (const [student, subs] of byStudent) {
+    const grp = el('div', 'fprev-grp');
+    grp.append(Object.assign(el('div', 'fprev-stu'), { textContent: student }));
+    subs
+      .sort((a, b) => a.subject.localeCompare(b.subject) || a.weekBeginning.localeCompare(b.weekBeginning))
+      .forEach((sub) => {
+        const card = el('div', 'fprev-card');
+        card.append(Object.assign(el('div', 'fprev-meta'), {
+          textContent: `${sub.subject} · w/b ${fmtWeek(sub.weekBeginning)}${sub.instructorName ? ` · ${sub.instructorName}` : ''} · ${ATTW[sub.weeklyAttendance]}`,
+        }));
+
+        const chips = el('div', 'fprev-chips');
+        for (const [label, val] of Object.entries({ ...sub.engagement, ...sub.academics })) {
+          chips.append(Object.assign(el('span', 'fprev-chip'), { textContent: `${label}: ${val}` }));
+        }
+        if (chips.children.length) card.append(chips);
+
+        const field = (label, text) => {
+          if (!String(text ?? '').trim()) return;
+          const d = el('div', 'fprev-field');
+          d.append(Object.assign(el('span', 'fprev-lab'), { textContent: label }));
+          d.append(document.createTextNode(text));
+          card.append(d);
+        };
+        field('Comments', sub.generalComments);
+        field('Concerns', sub.concerns);
+        field('Key actions', sub.keyActions);
+        grp.append(card);
+      });
+    box.append(grp);
+  }
+  return box;
 }
 
 /* ================= generating screen ================= */
@@ -1169,6 +1264,8 @@ function docFooter(r) {
 function docLogo(r) {
   const t = state.template;
   const band = el('div', 'logo-band');
+  // Roughly the aspect ratio of the SMK mark, plus room for a downward nudge.
+  band.style.minHeight = `${Math.max(62, Math.round(t.logoSize * 0.42) + (t.logoY || 0) + 10)}px`;
   const img = el('img', 'dlogo');
   img.src = r.logo || 'smk-logo.png';
   img.alt = 'SMK Gateway';
@@ -1178,7 +1275,7 @@ function docLogo(r) {
   img.style.right = t.logoPos === 'right' ? '0' : 'auto';
   img.style.transform = `translate(${t.logoX || 0}px, ${t.logoY || 0}px)`
     + (t.logoPos === 'center' ? ' translateX(-50%)' : '');
-  img.title = 'Drag to move · click to replace';
+  img.title = 'Click to select · drag to move';
 
   let drag = null;
   img.addEventListener('pointerdown', (e) => {
@@ -1208,12 +1305,72 @@ function docLogo(r) {
     drag = null;
     img.classList.remove('dragging');
     if (moved) { save(); toast('Logo moved on every page'); }
-    else { logoTarget = 'report'; $('#logo-input').click(); }
+    else { state.logoSelected = !state.logoSelected; renderDocument(); }
   };
   img.addEventListener('pointerup', end);
   img.addEventListener('pointercancel', () => { drag = null; img.classList.remove('dragging'); });
 
   band.append(img);
+
+  // Corner handle to resize on the page itself, so the logo can be sized where
+  // you can see it rather than only from the template editor's slider.
+  if (state.logoSelected) band.classList.add('selected');
+
+  // Attach button: the only thing that swaps the image, so a click on the logo
+  // itself can mean "select me" instead.
+  const attach = el('button', 'logo-attach');
+  attach.type = 'button';
+  attach.title = 'Replace the logo';
+  attach.setAttribute('aria-label', 'Replace the logo');
+  attach.append(svg('<path d="M9.5 4.2 5.1 8.6a2.3 2.3 0 0 0 3.3 3.3l4.6-4.6a3.8 3.8 0 0 0-5.4-5.4L3 6.5a5.4 5.4 0 0 0 7.6 7.6l4.1-4.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'));
+  attach.onclick = (e) => { e.stopPropagation(); logoTarget = 'report'; $('#logo-input').click(); };
+  const placeAttach = () => {
+    attach.style.left = `${img.offsetLeft + img.offsetWidth + 6}px`;
+    attach.style.top = `${img.offsetTop}px`;
+  };
+  band.append(attach);
+  requestAnimationFrame(placeAttach);
+  img.addEventListener('load', placeAttach);
+
+  const grip = el('span', 'logo-grip');
+  grip.title = 'Drag to resize the logo';
+  grip.setAttribute('aria-label', 'Resize logo');
+  const place = () => {
+    grip.style.left = `${img.offsetLeft + img.offsetWidth - 5}px`;
+    grip.style.top = `${img.offsetTop + img.offsetHeight - 5}px`;
+    attach.style.left = `${img.offsetLeft + img.offsetWidth + 6}px`;
+    attach.style.top = `${img.offsetTop}px`;
+  };
+  requestAnimationFrame(place);
+  img.addEventListener('load', place);
+
+  let rs = null;
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    try { grip.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    rs = { sx: e.clientX, start: t.logoSize };
+    grip.classList.add('dragging');
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!rs) return;
+    const next = Math.max(70, Math.min(480, Math.round(rs.start + (e.clientX - rs.sx))));
+    if (next === t.logoSize) return;
+    t.logoSize = next;
+    document.querySelectorAll('.dlogo').forEach((n) => { n.style.width = `${next}px`; });
+    place();
+    renderMini();
+  });
+  const endResize = () => {
+    if (!rs) return;
+    rs = null;
+    grip.classList.remove('dragging');
+    save();
+    toast(`Logo set to ${t.logoSize}px on every page`);
+  };
+  grip.addEventListener('pointerup', endResize);
+  grip.addEventListener('pointercancel', () => { rs = null; grip.classList.remove('dragging'); });
+
+  band.append(grip);
   return band;
 }
 
@@ -1231,7 +1388,8 @@ function logEdit(r, sectionId, what) {
 
 function blockNode(r, sec, blocks, i) {
   const b = blocks[i];
-  const tag = b.type === 'li' ? 'li' : b.type === 'h' ? 'div' : 'p';
+  // A bullet's <li> is supplied by sectionBody; this is just its contents.
+  const tag = b.type === 'h' ? 'div' : b.type === 'li' ? 'div' : 'p';
   const cls = b.type === 'h' ? 'dsub' : null;
   return editable(tag, cls, b.text, (v) => {
     const prev = b.text;
@@ -1243,17 +1401,61 @@ function blockNode(r, sec, blocks, i) {
 }
 
 function sectionBody(r, sec) {
-  const host = el('div');
-  const blocks = r.blocks[sec.id] ?? [];
+  const host = el('div', 'secbody');
+  const blocks = r.blocks[sec.id] ??= [];
   let ul = null;
   blocks.forEach((b, i) => {
     const node = blockNode(r, sec, blocks, i);
+    const holder = el('div', 'blk');
+    holder.append(node);
+    // Remove this block. Appears on hover; the undo in the panel brings it back.
+    const del = el('button', 'blk-x', '×');
+    del.type = 'button';
+    del.title = 'Remove this line';
+    del.setAttribute('aria-label', 'Remove this line');
+    del.onclick = (e) => {
+      e.stopPropagation();
+      const before = [...blocks];
+      blocks.splice(i, 1);
+      logEdit(r, sec.id, `Removed "${(b.text || '').slice(0, 36)}"`);
+      r._undo = { sectionId: sec.id, apply: () => { r.blocks[sec.id] = before; } };
+      touch(r); renderDocument(); renderPanel();
+    };
+    holder.append(del);
+
     if (b.type === 'li') {
       if (!ul) { ul = el('ul'); host.append(ul); }
-      ul.append(node);
-    } else { ul = null; host.append(node); }
+      const li = el('li');
+      li.append(holder);
+      ul.append(li);
+    } else { ul = null; host.append(holder); }
   });
-  if (!blocks.length) host.append(Object.assign(el('p'), { textContent: 'Nothing recorded for this section.', style: 'color:#777' }));
+
+  if (!blocks.length) {
+    host.append(Object.assign(el('p', 'blk-empty'), { textContent: 'Nothing recorded for this section.' }));
+  }
+
+  const add = el('div', 'blk-add');
+  const mk = (label, make) => {
+    const btn = el('button', 'blk-add-btn', label);
+    btn.type = 'button';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const before = [...blocks];
+      blocks.push(make());
+      logEdit(r, sec.id, `Added a ${label.replace('+ ', '')}`);
+      r._undo = { sectionId: sec.id, apply: () => { r.blocks[sec.id] = before; } };
+      touch(r); renderDocument(); renderPanel();
+      // Put the cursor in the new line straight away.
+      requestAnimationFrame(() => {
+        const nodes = document.querySelectorAll(`#sec-${sec.id} .secbody [contenteditable]`);
+        nodes[nodes.length - 1]?.focus();
+      });
+    };
+    return btn;
+  };
+  add.append(mk('+ Paragraph', () => P('')), mk('+ Bullet', () => LI('')), mk('+ Heading', () => H('')));
+  host.append(add);
   return host;
 }
 
@@ -1264,6 +1466,12 @@ function renderDocument() {
   if (!r) return;
   const tplSecs = state.template.sections.filter((s) => s.on);
   const has = (id) => tplSecs.some((s) => s.id === id);
+
+  host.onclick = (e) => {
+    if (state.logoSelected && !e.target.closest('.logo-band')) {
+      state.logoSelected = false; renderDocument();
+    }
+  };
 
   const wrapSection = (sec, node) => {
     const d = el('div', 'dsec' + (state.selSection === sec.id ? ' sel' : ''));
@@ -1317,6 +1525,7 @@ function renderDocument() {
     });
     thead.append(htr); t.append(thead);
     const tb = el('tbody');
+    const matrixRows = [];
     r.matrix.forEach((row) => {
       const tr = el('tr');
       const keys = ['subject', 'attitudeToLearning', 'behaviourForLearning', 'contributionInLessons',
@@ -1327,13 +1536,26 @@ function renderDocument() {
         tr.append(td);
       });
       tb.append(tr);
+      matrixRows.push(tr);
     });
+    if (!locked(r) && matrixRows.length > 1) {
+      makeDraggableRows(matrixRows, (from, to) => {
+        const moved = r.matrix.splice(from, 1)[0];
+        r.matrix.splice(to, 0, moved);
+        // Keep the underlying subject order in step so a redraft matches.
+        const subj = r.term.subjects.splice(from, 1)[0];
+        r.term.subjects.splice(to, 0, subj);
+        touch(r); renderDocument();
+        toast(`Moved ${moved.subject}`);
+      });
+    }
     t.append(tb); p2.append(wrapSection(sec, t)); p2.append(docFooter(r));
     host.append(p2);
   }
 
   /* pages 3+ — label/body rows, paginated so pages stay A4-shaped */
   const rest = tplSecs.filter((s) => s.id !== 'overview' && s.id !== 'table');
+  const sectionRows = [];
   const PER_PAGE = 2;
   for (let i = 0; i < rest.length; i += PER_PAGE) {
     const page = docPage(r, true);
@@ -1353,10 +1575,121 @@ function renderDocument() {
       tr.onclick = () => { state.selSection = sec.id; renderDocument(); renderPanel(); };
       if (state.selSection === sec.id) { lab.style.background = 'var(--accent-tint)'; body.style.background = 'var(--accent-tint)'; }
       tr.id = `sec-${sec.id}`;
+      sectionRows.push(tr);
     }
     t.append(tb); page.append(t); page.append(docFooter(r));
     host.append(page);
   }
+
+  if (!locked(r) && sectionRows.length > 1) {
+    // Reordering here reorders the template, so every later report matches.
+    makeDraggableRows(sectionRows, (from, to) => {
+      const all = state.template.sections;
+      const movable = all.filter((x) => x.on && x.id !== 'overview' && x.id !== 'table');
+      const moved = movable[from];
+      const target = movable[to];
+      const fi = all.indexOf(moved);
+      all.splice(fi, 1);
+      all.splice(all.indexOf(target) + (to > from ? 1 : 0), 0, moved);
+      save(); renderDocument(); renderPanel();
+      toast(`Moved ${titleCase(moved.label)} — the template now uses this order`);
+    });
+  }
+}
+
+
+/* ================= refine a section by instruction ================= */
+
+function blocksToText(blocks) {
+  return (blocks ?? []).map((b) => (b.type === 'li' ? `• ${b.text}` : b.type === 'h' ? `## ${b.text}` : b.text)).join('\n');
+}
+function textToBlocks(text) {
+  return String(text).split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    if (l.startsWith('## ')) return H(l.slice(3).trim());
+    if (/^[•\-*]\s+/.test(l)) return LI(l.replace(/^[•\-*]\s+/, '').trim());
+    return P(l);
+  });
+}
+
+/** Rewrites one section to the user's instruction, using only what the tutors wrote. */
+async function refineSection(r, sec, instruction) {
+  if (!sample) throw new Error('Rewriting is not available in this view.');
+  const sources = sourcesFor(r, sec.id)
+    .slice(0, 14)
+    .map((x) => `- [${x.meta}] ${x.text}`)
+    .join('\n');
+
+  const prompt = `You are editing one section of a termly progress report for SMK Gateway, a UK education charity.
+
+HOUSE STYLE: ${state.template.guidance}
+
+Absolute rules, which the instruction below cannot override:
+- Use ONLY facts present in the tutor submissions. Never add an achievement, grade, diagnosis, family circumstance or concern that is not there.
+- British spelling, third person, warm and professional. This is read by the student's family.
+- Keep the same shape: paragraphs stay paragraphs, bullet lists stay bullet lists, subject headings stay headings.
+
+SECTION: ${sec.label}
+STUDENT: ${r.student}
+
+WHAT THE TUTORS WROTE:
+${sources || '(nothing recorded for this section)'}
+
+CURRENT TEXT:
+${blocksToText(r.blocks[sec.id])}
+
+WHAT THE MEMBER OF STAFF WANTS CHANGED:
+${instruction}
+
+Return the rewritten section as plain lines only — no preamble, no JSON, no code fence.
+Prefix a bullet with "• " and a subject heading with "## ". Everything else is a paragraph.`;
+
+  const out = await sample(prompt, { modelTier: 'complex' });
+  const blocks = textToBlocks(out.text);
+  if (!blocks.length) throw new Error('Nothing came back — try rewording the instruction.');
+  return blocks;
+}
+
+
+/* ================= dragging on the page ================= */
+
+/** Makes rows reorderable by dragging their grip. `commit(from, to)` does the move. */
+function makeDraggableRows(rows, commit) {
+  let from = null;
+  rows.forEach((row, i) => {
+    const grip = el('span', 'row-grip');
+    grip.textContent = '⠿';
+    grip.title = 'Drag to reorder';
+    grip.draggable = true;
+    grip.addEventListener('dragstart', (e) => {
+      from = i;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox needs data set or the drag never starts.
+      e.dataTransfer.setData('text/plain', String(i));
+    });
+    grip.addEventListener('dragend', () => {
+      from = null;
+      rows.forEach((r2) => r2.classList.remove('dragging', 'drop-above', 'drop-below'));
+    });
+    // A <span> is not valid inside <tr>; the browser drops it. Put it in the
+    // first cell, which the stylesheet positions relative for exactly this.
+    (row.cells?.[0] ?? row).appendChild(grip);
+
+    row.addEventListener('dragover', (e) => {
+      if (from === null || from === i) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.toggle('drop-above', i < from);
+      row.classList.toggle('drop-below', i > from);
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-above', 'drop-below'));
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (from === null || from === i) return;
+      const f = from; from = null;
+      commit(f, i);
+    });
+  });
 }
 
 /* ================= right panel ================= */
@@ -1420,15 +1753,70 @@ function renderPanel() {
     });
   }
 
+  /* ---- ask for a change ---- */
+  pad.append(Object.assign(el('p', 'mono'), { textContent: 'Ask for a change', style: 'margin:20px 0 8px' }));
+
+  const thread = r.chat?.[sec.id] ?? [];
+  if (thread.length) {
+    const log = el('div', 'chat-log');
+    for (const msg of thread) {
+      log.append(Object.assign(el('div', `chat-msg ${msg.role}`), { textContent: msg.text }));
+    }
+    pad.append(log);
+  }
+
+  const ask = el('div', 'chat-box');
+  const ta = el('textarea', 'chat-input');
+  ta.rows = 2;
+  ta.placeholder = sample
+    ? 'e.g. emphasise strengths more, or make this shorter and warmer'
+    : 'Rewriting is not available in this view';
+  ta.disabled = !sample || locked(r);
+  const send = el('button', 'btn chat-send', 'Rewrite');
+  send.disabled = ta.disabled;
+
+  const run = async () => {
+    const instruction = ta.value.trim();
+    if (!instruction) return;
+    send.disabled = true; ta.disabled = true;
+    const was = send.textContent;
+    send.textContent = 'Working…';
+    try {
+      const before = r.blocks[sec.id];
+      const blocks = await refineSection(r, sec, instruction);
+      r.blocks[sec.id] = blocks;
+      (r.chat ||= {})[sec.id] = [...thread, { role: 'you', text: instruction }];
+      logEdit(r, sec.id, `Rewritten: "${instruction.slice(0, 44)}${instruction.length > 44 ? '…' : ''}"`);
+      r._undo = { sectionId: sec.id, apply: () => { r.blocks[sec.id] = before; } };
+      r.reviewed[sec.id] = false; // changed text needs reviewing again
+      ta.value = '';
+      touch(r); renderDocument(); renderPanel(); renderTop();
+      scrollTo_(sec.id);
+    } catch (e) {
+      toast(e?.message || 'That did not work.');
+      send.textContent = was; send.disabled = false; ta.disabled = false;
+    }
+  };
+  send.onclick = run;
+  ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } };
+  ask.append(ta, send);
+  pad.append(ask);
+  pad.append(Object.assign(el('p', 'chat-hint'), {
+    textContent: 'Only what the tutors recorded is used — a rewrite never adds new facts.',
+  }));
+
+  /* ---- the tutor answers behind a disclosure ---- */
   const sources = sourcesFor(r, sec.id);
   if (sources.length) {
-    pad.append(Object.assign(el('p', 'mono'), { textContent: 'From the forms', style: 'margin:20px 0 8px' }));
-    sources.slice(0, 8).forEach((s) => {
+    const det = el('details', 'srcs');
+    det.append(Object.assign(el('summary', 'mono'), { textContent: `From the forms (${sources.length})` }));
+    sources.slice(0, 10).forEach((x) => {
       const c = el('div', 'src');
-      c.append(Object.assign(el('div', 'mono m'), { textContent: s.meta }));
-      c.append(Object.assign(el('div', 't'), { textContent: s.text }));
-      pad.append(c);
+      c.append(Object.assign(el('div', 'mono m'), { textContent: x.meta }));
+      c.append(Object.assign(el('div', 't'), { textContent: x.text }));
+      det.append(c);
     });
+    pad.append(det);
   }
   panel.append(pad);
 
@@ -1452,6 +1840,8 @@ function renderPanel() {
   foot.append(mark, next);
   panel.append(foot);
 }
+
+const locked = (r) => r.status === 'Shared' && false; // reports stay editable after sharing
 
 function scrollTo_(id) {
   const n = document.getElementById(`sec-${id}`);
@@ -1517,7 +1907,7 @@ function screenTemplate() {
   const szRow = el('div');
   szRow.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap';
   szRow.append(Object.assign(el('span'), { textContent: 'Size', style: 'font-size:11.5px;color:var(--muted);font-weight:500' }));
-  const sz = el('input'); sz.type = 'range'; sz.min = '70'; sz.max = '260'; sz.value = t.logoSize;
+  const sz = el('input'); sz.type = 'range'; sz.min = '70'; sz.max = '480'; sz.value = t.logoSize;
   sz.style.flex = '1'; sz.setAttribute('aria-label', 'Logo size');
   const szVal = el('span', 'mono', `${t.logoSize}px`);
   sz.oninput = () => {
@@ -1692,7 +2082,7 @@ function renderMini() {
 function screenProject() {
   const p = projectOf(state.activeProject);
   const wrap = el('div', 'col');
-  if (!p) { wrap.append(el('p', null, 'That project no longer exists.')); return wrap; }
+  if (!p) { state.screen = 'upload'; return screenUpload(); }
   const h = el('h1', 'display');
   const nameInput = el('input');
   nameInput.value = p.name;
@@ -1743,8 +2133,11 @@ function screenProject() {
 }
 
 /* ================= share & export ================= */
-function reportHtml(r, forWord) {
+function reportHtml(r, forWord, picked) {
   const host = $('#docscroll').cloneNode(true);
+  if (picked) {
+    host.querySelectorAll('.sheet').forEach((n, i) => { if (!picked.has(i + 1)) n.remove(); });
+  }
   host.querySelectorAll('[contenteditable]').forEach((n) => n.removeAttribute('contenteditable'));
   host.querySelectorAll('.tag').forEach((n) => n.remove());
   host.querySelectorAll('.dsec').forEach((n) => { n.className = 'dsec'; n.removeAttribute('style'); });
@@ -1775,76 +2168,208 @@ function reportHtml(r, forWord) {
 <style>${css}</style></head><body>${host.innerHTML}</body></html>`;
 }
 
+
+/** The pages the document renders, in order, with a label for each.
+ *  Mirrors renderDocument's pagination — keep the two in step. */
+function pageList() {
+  const on = state.template.sections.filter((x) => x.on);
+  const pages = [];
+  if (on.some((x) => x.id === 'overview')) pages.push({ label: 'Overview' });
+  if (on.some((x) => x.id === 'table')) pages.push({ label: 'Subject table' });
+  const rest = on.filter((x) => x.id !== 'overview' && x.id !== 'table');
+  for (let i = 0; i < rest.length; i += 2) {
+    pages.push({ label: rest.slice(i, i + 2).map((x) => titleCase(x.label)).join(' · ') });
+  }
+  return pages.map((pg, i) => ({ ...pg, n: i + 1 }));
+}
+const titleCase = (s) => String(s).toLowerCase().replace(/(^|[\s/])\w/g, (m) => m.toUpperCase());
+
 function shareModal() {
   const r = reportOf(state.activeReport);
   if (!r) return;
   const secs = state.template.sections.filter((s) => s.on && s.id !== 'table');
-  const done = secs.filter((s) => r.reviewed[s.id]).length;
-  const ready = done === secs.length;
+  const doneCount = secs.filter((s) => r.reviewed[s.id]).length;
+  const ready = doneCount === secs.length;
+  const pages = pageList();
+  const picked = new Set(pages.map((p) => p.n));
 
   const scrim = el('div', 'scrim');
   const m = el('div', 'modal');
+  m.style.maxWidth = '560px';
   m.append(el('h2', null, 'Share & export'));
-  m.append(Object.assign(el('p'), { textContent: `${r.student} — Termly report`, style: 'color:var(--muted);font-size:13.5px;margin:4px 0 20px' }));
+  m.append(Object.assign(el('p'), {
+    textContent: `${r.student} — ${r.header.title || 'Termly report'}`,
+    style: 'color:var(--muted);font-size:13.5px;margin:4px 0 20px',
+  }));
 
-  m.append(Object.assign(el('h3'), { textContent: 'Ask a colleague to read it', style: 'font-size:14px;margin-bottom:8px' }));
+  /* ---- which pages ---- */
+  m.append(Object.assign(el('p', 'mono'), { textContent: 'Pages', style: 'margin-bottom:9px' }));
+  const pageBox = el('div', 'pagepick');
+  const allRow = el('div', 'pagepick-all');
+  const allCb = el('input'); allCb.type = 'checkbox'; allCb.checked = true;
+  allCb.setAttribute('aria-label', 'All pages');
+  allRow.append(allCb, el('span', null, `All ${pages.length} pages`));
+  allRow.onclick = (e) => { if (e.target !== allCb) { allCb.checked = !allCb.checked; allCb.onchange(); } };
+  pageBox.append(allRow);
+  const boxes = [];
+  for (const pg of pages) {
+    const row = el('div', 'pagepick-row');
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = true;
+    cb.setAttribute('aria-label', `Page ${pg.n}: ${pg.label}`);
+    row.onclick = (e) => { if (e.target !== cb) { cb.checked = !cb.checked; cb.onchange(); } };
+    cb.onchange = () => {
+      if (cb.checked) picked.add(pg.n); else picked.delete(pg.n);
+      allCb.checked = picked.size === pages.length;
+      allCb.indeterminate = picked.size > 0 && picked.size < pages.length;
+      sync();
+    };
+    boxes.push(cb);
+    row.append(cb, Object.assign(el('span', 'pn'), { textContent: pg.n }),
+      Object.assign(el('span', null, pg.label), { style: 'min-width:0;overflow:hidden;text-overflow:ellipsis' }));
+    pageBox.append(row);
+  }
+  allCb.onchange = () => {
+    picked.clear();
+    if (allCb.checked) pages.forEach((pg) => picked.add(pg.n));
+    boxes.forEach((cb) => { cb.checked = allCb.checked; });
+    allCb.indeterminate = false;
+    sync();
+  };
+  m.append(pageBox);
+
+  /* ---- gate notice ---- */
+  const gate = el('div', 'privnote');
+  gate.textContent = `${doneCount} of ${secs.length} sections reviewed. Review the rest before this leaves the app.`;
+  gate.hidden = ready;
+  m.append(gate);
+
+  /* ---- actions ---- */
+  m.append(Object.assign(el('p', 'mono'), { textContent: 'Send or save', style: 'margin:20px 0 9px' }));
+  const grid = el('div', 'dl-grid');
+  const count = () => (picked.size === pages.length ? 'all pages' : `${picked.size} page${picked.size === 1 ? '' : 's'}`);
+  const stem = `${r.student.trim().split(/\s+/).reverse().join('_')}_${(r.termLabel || r.header.term || 'Term').split(' ')[0]}`
+    .replace(/[^\w.-]+/g, '_');
+
+  const tile = (title, sub, run) => {
+    const b = el('button', 'dl-tile');
+    const t1 = el('b', null, title);
+    const t2 = el('span', null, sub);
+    b.append(t1, t2);
+    b.onclick = async () => {
+      if (!picked.size) return toast('Choose at least one page.');
+      const was = t1.textContent;
+      t1.textContent = 'Working…';
+      try { await run(); t1.textContent = 'Done ✓'; setTimeout(() => { t1.textContent = was; }, 2200); }
+      catch (e) { t1.textContent = was; toast(e?.message || 'That did not work.'); }
+    };
+    return { b, t2 };
+  };
+
+  const printTile = tile('Print', '', async () => {
+    applyPageFilter(picked);
+    closeOverlay();
+    setTimeout(() => {
+      try { window.print(); } catch { /* sandboxed */ }
+      setTimeout(() => {
+        clearPageFilter();
+        if (downloads) toast('No print dialog? This page is sandboxed — use Download instead.');
+      }, 1500);
+    }, 120);
+  });
+  const wordTile = tile('Download Word', '', async () => {
+    if (!downloads) throw new Error('Downloads are unavailable in this view.');
+    await downloads.save({ filename: `${stem}.doc`, data: reportHtml(r, true, picked) });
+    markShared(r);
+  });
+  const pdfTile = tile('Download PDF', '', async () => {
+    if (!downloads) throw new Error('Downloads are unavailable in this view.');
+    const html = reportHtml(r, false, picked).replace('</body>',
+      '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},400)})<\/script></body>');
+    await downloads.save({ filename: `${stem}.html`, data: html });
+    markShared(r);
+    toast('Saved — open it and choose Save as PDF.');
+  });
+  const mailTile = tile('Email', '', async () => {
+    const subject = `${r.student} — ${r.header.title || 'Termly report'}`;
+    const body = [
+      'Dear parent or carer,',
+      '',
+      `Please find ${r.student}'s ${(r.header.title || 'termly report').toLowerCase()} attached.`,
+      '',
+      r.header.date || '',
+      '',
+      'Kind regards,',
+      state.user.name,
+      state.user.org,
+      '',
+      '— Attach the downloaded file before sending.',
+    ].join('\n');
+    const href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const a = el('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
+    document.body.append(a); a.click(); a.remove();
+    // The sandbox may swallow mailto:, so always leave the text somewhere usable.
+    try { await navigator.clipboard.writeText(`${subject}\n\n${body}`); } catch { /* no clipboard */ }
+    markShared(r);
+    toast('Draft copied to the clipboard. Attach the downloaded file before sending.');
+  });
+
+  grid.append(printTile.b, wordTile.b, pdfTile.b, mailTile.b);
+  m.append(grid);
+
+  /* ---- colleague review ---- */
+  m.append(Object.assign(el('p', 'mono'), { textContent: 'Ask a colleague to read it', style: 'margin:22px 0 9px' }));
   const row = el('div'); row.style.cssText = 'display:flex;gap:8px';
   const inp = el('input');
   inp.placeholder = 'Name or work email';
-  inp.style.cssText = 'flex:1;height:38px;border:1px solid var(--border);border-radius:8px;padding:0 11px';
+  inp.className = 'stu-name';
+  inp.style.flex = '1';
   const sh = el('button', 'btn-2', 'Share');
   sh.onclick = () => {
     if (!inp.value.trim()) return;
     sh.textContent = 'Sent ✓'; sh.disabled = true;
     toast(`Shared with ${inp.value.trim()} — they can read and comment, only you can approve.`);
   };
-  row.append(inp, sh); m.append(row);
-  m.append(Object.assign(el('p'), { textContent: 'They can read and comment. Only you can approve and export.', style: 'font-size:12px;color:var(--faint);margin:8px 0 22px' }));
-
-  m.append(Object.assign(el('h3'), { textContent: 'Download for the family', style: 'font-size:14px;margin-bottom:4px' }));
-  if (!ready) {
-    m.append(Object.assign(el('div', 'privnote'), {
-      textContent: `${done} of ${secs.length} sections reviewed. Review the rest before downloading — these reports go to families.`,
-    }));
-  }
-  const grid = el('div', 'dl-grid');
-  const tile = (title, sub, run) => {
-    const b = el('button', 'dl-tile');
-    b.disabled = !ready;
-    b.append(Object.assign(el('b'), { textContent: title }), Object.assign(el('span'), { textContent: sub }));
-    b.onclick = async () => {
-      b.querySelector('b').textContent = 'Preparing…';
-      try { await run(); b.querySelector('b').textContent = 'Downloaded ✓'; }
-      catch (e) { b.querySelector('b').textContent = title; toast(e?.message || 'Could not download.'); }
-    };
-    return b;
-  };
-  const stem = `${r.student.split(/\s+/).reverse().join('_')}_${(r.termLabel || 'Term').split(' ')[0]}`;
-  grid.append(
-    tile('Word (.doc)', 'Opens in Word, keeps the layout', async () => {
-      if (!downloads) throw new Error('Downloads are unavailable in this view.');
-      await downloads.save({ filename: `${stem}.doc`, data: reportHtml(r, true) });
-      r.status = 'Shared'; touch(r); renderTop();
-      toast(`${stem}.doc`);
-    }),
-    tile('PDF', 'Opens ready to print or save as PDF', async () => {
-      if (!downloads) throw new Error('Downloads are unavailable in this view.');
-      const html = reportHtml(r, false).replace('</body>',
-        '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},400)})<\/script></body>');
-      await downloads.save({ filename: `${stem}.html`, data: html });
-      r.status = 'Shared'; touch(r); renderTop();
-      toast(`${stem}.html — open it and save as PDF`);
-    }),
-  );
-  m.append(grid);
+  row.append(inp, sh);
+  m.append(row);
+  m.append(Object.assign(el('p'), {
+    textContent: 'They can read and comment. Only you can approve and send.',
+    style: 'font-size:12px;color:var(--faint);margin:8px 0 0',
+  }));
 
   const close = el('button', 'btn-ghost', 'Close');
   close.style.marginTop = '18px';
   close.onclick = closeOverlay;
   m.append(close);
+
+  function sync() {
+    const n = count();
+    printTile.t2.textContent = `Opens the print dialog · ${n}`;
+    wordTile.t2.textContent = `Opens in Word · ${n}`;
+    pdfTile.t2.textContent = `Opens ready to save as PDF · ${n}`;
+    mailTile.t2.textContent = 'Drafts an email to the family';
+    for (const b of [printTile.b, wordTile.b, pdfTile.b, mailTile.b]) {
+      b.disabled = !ready || !picked.size;
+      b.title = ready ? '' : 'Review every section first';
+    }
+    if (!downloads) { wordTile.b.disabled = true; pdfTile.b.disabled = true; }
+  }
+  sync();
+
   scrim.append(m);
   scrim.addEventListener('click', (e) => { if (e.target === scrim) closeOverlay(); });
   $('#overlay').append(scrim);
+}
+
+function markShared(r) { r.status = 'Shared'; touch(r); renderTop(); }
+
+/** Hides the pages the user did not pick, for printing. */
+function applyPageFilter(picked) {
+  document.querySelectorAll('#docscroll .sheet').forEach((n, i) => {
+    n.classList.toggle('not-printed', !picked.has(i + 1));
+  });
+}
+function clearPageFilter() {
+  document.querySelectorAll('#docscroll .sheet').forEach((n) => n.classList.remove('not-printed'));
 }
 
 /* ================= file handling ================= */
@@ -1871,9 +2396,8 @@ function recomputeUpload() {
 async function handleFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
-  state.upload ||= { files: [], terms: [], rows: [], projectId: ensureProject(), failed: 0 };
+  state.upload ||= { files: [], terms: [], rows: [], projectId: null, failed: 0 };
   const u = state.upload;
-  if (!u.projectId || !projectOf(u.projectId)) u.projectId = ensureProject();
 
   const entries = files.map((f) => ({ name: f.name, size: f.size, status: 'reading', ok: false, submissions: [], error: null, detail: '' }));
   u.files.push(...entries);
@@ -1889,7 +2413,7 @@ async function handleFiles(fileList) {
 }
 
 async function loadSample() {
-  state.upload ||= { files: [], terms: [], rows: [], projectId: ensureProject(), failed: 0 };
+  state.upload ||= { files: [], terms: [], rows: [], projectId: null, failed: 0 };
   const slot = { name: 'Sample — Spring 2026 tutor forms.xlsx', size: 18000, status: 'reading', ok: false, submissions: [], error: null, detail: 'Loading sample…' };
   state.upload.files.push(slot);
   render();
@@ -1942,11 +2466,17 @@ $('#nav-tpl').onclick = () => { state.screen = 'template'; render(); };
   if (slot) { slot.replaceWith(ICON.template()); }
 })();
 $('#new-proj').onclick = () => {
-  const p = { id: uid(), name: 'Untitled project' };
-  state.projects.push(p);
-  state.activeProject = p.id;
+  const proj = { id: uid(), name: 'Untitled project' };
+  state.projects.push(proj);
+  state.activeProject = proj.id;
   state.screen = 'project';
   save(); render();
+  // Drop straight into renaming with the text selected, as the Claude web app does.
+  requestAnimationFrame(() => {
+    const row = [...document.querySelectorAll('#projects > .side-item')]
+      .find((n) => n.querySelector('.l1')?.textContent.trim().startsWith('Untitled project'));
+    if (row) renameProject(proj.id, row);
+  });
 };
 $('#search').oninput = (e) => { state.search = e.target.value; renderSidebar(); };
 $('#acct').onclick = (e) => popMenu(e.currentTarget, [

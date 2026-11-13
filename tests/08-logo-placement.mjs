@@ -29,7 +29,7 @@ const transforms = await p.$$eval('.dlogo', (n) => [...new Set(n.map((x) => x.st
 t(`applies to all ${(await p.$$eval('.dlogo', (n) => n.length))} pages`, transforms.length === 1, transforms[0]);
 t('toast confirms', (await p.$eval('#toast', (n) => n.textContent)).includes('every page'));
 
-console.log('\n=== a plain click still replaces the logo ===');
+console.log('\n=== a plain click selects; the attach button replaces ===');
 await p.evaluate(() => {
   window.__picked = 0;
   document.querySelector('#logo-input').addEventListener('click', () => { window.__picked++; }, true);
@@ -39,11 +39,20 @@ await p.mouse.move(b2.x, b2.y);
 await p.mouse.down();
 await p.mouse.up();
 await new Promise((r) => setTimeout(r, 400));
-t('click with no movement opens the file picker', (await p.evaluate(() => window.__picked)) === 1);
+t('click with no movement selects the logo', await p.$eval('.logo-band', (n) => n.classList.contains('selected')));
+t('clicking does not open the picker any more', (await p.evaluate(() => window.__picked)) === 0);
+await p.evaluate(() => document.querySelector('.logo-attach').click());
+await new Promise((r) => setTimeout(r, 250));
+t('the attach button opens the picker', (await p.evaluate(() => window.__picked)) === 1);
 await p.mouse.move(b2.x, b2.y); await p.mouse.down();
 await p.mouse.move(b2.x + 60, b2.y, { steps: 8 }); await p.mouse.up();
 await new Promise((r) => setTimeout(r, 300));
 t('a drag does not open the picker', (await p.evaluate(() => window.__picked)) === 1);
+t('clicking the page deselects the logo', await p.evaluate(async () => {
+  document.querySelector('#docscroll').click();
+  await new Promise((r) => setTimeout(r, 200));
+  return !document.querySelector('.logo-band')?.classList.contains('selected');
+}));
 
 console.log('\n=== size slider drives document and preview ===');
 await p.evaluate(() => document.querySelector('#nav-tpl').click());

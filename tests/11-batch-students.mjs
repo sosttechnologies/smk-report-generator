@@ -50,13 +50,13 @@ t(`${d.reports.length} reports created`, d.reports.length === 3);
 t('edited name used', d.reports.some((r) => r.student === 'Edited Name'), d.reports.map((r) => r.student).join(', '));
 t('key stages applied', d.reports.every((r) => /^KS /.test(r.keyStage)), d.reports.map((r) => r.keyStage).join(', '));
 t('each has its own sections', d.reports.every((r) => Object.keys(r.blocks).length >= 8));
-t('all in the chosen project', new Set(d.reports.map((r) => r.projectId)).size === 1);
+t('left loose, not filed in a project nobody made', d.reports.every((r) => !r.projectId));
+t('no project invented', d.projects.length === 0);
 
 console.log('\n=== all four are reachable and editable ===');
 const recents = await p.$$eval('#recents .side-item', (n) => n.length);
 t(`${recents} in recents`, recents === 3);
-const nested = await p.$$eval('#projects .nest .side-item', (n) => n.length);
-t(`${nested} under the project`, nested === 3);
+t('projects panel shows the empty hint', (await p.$eval('#projects', (n) => n.textContent)).includes('No projects yet'));
 for (let i = 0; i < 3; i++) {
   await p.evaluate((idx) => document.querySelectorAll('#recents .side-item')[idx].click(), i);
   await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 8000 });

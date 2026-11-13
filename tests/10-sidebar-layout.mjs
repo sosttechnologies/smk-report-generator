@@ -1,6 +1,6 @@
 /* The sidebar rows must stack their two lines and show icons. */
 import puppeteer from 'puppeteer';
-import { loadSampleSingle } from './helpers.mjs';
+import { loadSampleSingle, makeProject, fileInto } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, x='') => console.log(`${v ? '\u2713' : '\u2717'} ${l}${x ? ' \u2014 ' + x : ''}`);
 const p = await b.newPage();
@@ -9,7 +9,9 @@ const errs = []; p.on('pageerror', (e) => errs.push(e.message));
 await p.goto('http://localhost:4312/', { waitUntil: 'networkidle0' });
 await p.evaluate(() => localStorage.clear());
 await p.reload({ waitUntil: 'networkidle0' });
+await makeProject(p, 'Spring 2026');
 await loadSampleSingle(p);
+await fileInto(p, 'Spring 2026');
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 await new Promise((r) => setTimeout(r, 900));
@@ -22,9 +24,8 @@ const fits = await p.evaluate(() => {
   return row.scrollWidth - row.clientWidth;
 });
 t(`row text does not overflow (${fits}px)`, fits <= 1);
-t('no report count beside the project name',
-  !/\d/.test(await p.$eval('#projects > .side-item .l1', (n) => n.textContent)),
-  await p.$eval('#projects > .side-item .l1', (n) => n.textContent));
+const projLabel = await p.$eval('#projects > .side-item .l1', (n) => n.textContent);
+t('project row is the name alone, no count', projLabel.trim() === 'Spring 2026', projLabel);
 
 t('folder icon on the project row', await p.$('#projects > .side-item svg.ic') !== null);
 t('chevron is an svg', await p.$('#projects .chev-btn svg') !== null);

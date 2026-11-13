@@ -184,6 +184,25 @@ h1.display .alt{color:var(--muted);display:block}
 .frow .st.done{color:var(--pos)} .frow .st.bad{color:var(--priv)}
 .frow .bar{position:absolute;left:0;bottom:0;height:3px;background:var(--accent);
   width:0;transition:width .25s}
+.frow.clickable{cursor:pointer}
+.frow.clickable:hover{border-color:var(--dashed);background:var(--subtle)}
+.frow.open{border-color:var(--accent);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.fprev{border:1px solid var(--accent);border-top:0;border-radius:0 0 10px 10px;
+  background:var(--subtle);padding:12px 14px;margin-top:-8px;max-height:340px;overflow:auto}
+.fprev-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  align-items:baseline;margin-bottom:10px}
+.fprev-warn{font-size:11.5px;color:var(--priv)}
+.fprev-grp+.fprev-grp{margin-top:12px}
+.fprev-stu{font-size:12.5px;font-weight:600;margin-bottom:6px}
+.fprev-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:9px 11px;margin-bottom:6px}
+.fprev-meta{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.04em;
+  color:var(--faint);margin-bottom:6px}
+.fprev-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:7px}
+.fprev-chip{font-size:10.5px;background:var(--subtle-2);border:1px solid var(--border);
+  border-radius:999px;padding:2px 7px;color:var(--body-2)}
+.fprev-field{font-size:12.5px;line-height:1.5;color:var(--body-2);margin-bottom:4px}
+.fprev-lab{color:var(--faint);margin-right:5px}
 .xbtn{width:26px;height:26px;border-radius:6px;background:none;border:0;color:var(--faint)}
 .xbtn:hover{background:var(--hover);color:var(--ink)}
 .card{margin-top:20px;background:var(--surface);border:1px solid var(--border);
@@ -257,6 +276,20 @@ label.f input:focus,label.f select:focus{outline:none;border-color:var(--accent)
   padding:11px 12px;margin-bottom:8px}
 .src .m{margin-bottom:6px}
 .src .t{font-size:12.5px;color:var(--body-2);line-height:1.45}
+.chat-log{display:flex;flex-direction:column;gap:6px;margin-bottom:9px}
+.chat-msg{font-size:12.5px;line-height:1.45;border-radius:9px;padding:7px 10px}
+.chat-msg.you{background:var(--accent-soft);color:var(--ink)}
+.chat-box{display:flex;flex-direction:column;gap:7px}
+.chat-input{border:1px solid var(--border);border-radius:9px;padding:8px 10px;font-size:13px;
+  line-height:1.45;resize:vertical;min-height:52px;background:var(--surface);font-family:inherit}
+.chat-input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+.chat-input:disabled{background:var(--subtle-2);color:var(--faint)}
+.chat-send{align-self:flex-start;padding:7px 14px;font-size:13px}
+.chat-hint{font-size:11.5px;color:var(--faint);margin:8px 0 0;line-height:1.45}
+.srcs{margin-top:18px}
+.srcs summary{cursor:pointer;padding:4px 0}
+.srcs summary:hover{color:var(--body)}
+.srcs .src{margin-top:7px}
 .chg{font-size:12.5px;color:var(--muted);border-left:2px solid var(--border);
   padding:3px 0 3px 10px;margin-bottom:7px}
 .panel-foot{margin-top:auto;border-top:1px solid var(--border);padding:14px 18px;
@@ -270,12 +303,24 @@ label.f input:focus,label.f select:focus{outline:none;border-color:var(--accent)
   font-family:Carlito,Calibri,sans-serif;color:#111;font-size:13px;line-height:1.45;
   flex:none;overflow:hidden}
 .sheet.auto{aspect-ratio:auto;min-height:auto}
-.logo-band{position:relative;height:62px;margin-bottom:14px}
-.dlogo{position:absolute;top:0;height:auto;max-width:70%;cursor:grab;
+.logo-band{position:relative;min-height:62px;margin-bottom:14px}
+.dlogo{position:absolute;top:0;height:auto;max-width:100%;cursor:grab;
   mix-blend-mode:multiply;touch-action:none;user-select:none;
   outline:1px dashed transparent;outline-offset:4px;border-radius:2px;transition:outline-color .12s}
 .dlogo:hover{outline-color:var(--dashed)}
 .dlogo.dragging{cursor:grabbing;outline-color:var(--accent);opacity:.85}
+.logo-attach{position:absolute;width:22px;height:22px;border-radius:5px;border:1px solid var(--border);
+  background:#fff;color:var(--muted);display:grid;place-items:center;padding:0;
+  opacity:0;transition:opacity .12s;z-index:2}
+.logo-attach svg{width:13px;height:13px}
+.logo-band:hover .logo-attach,.logo-band.selected .logo-attach{opacity:1}
+.logo-attach:hover{color:var(--ink);border-color:var(--dashed)}
+.logo-band.selected .dlogo{outline:1.5px solid var(--accent);outline-offset:4px}
+.logo-band.selected .logo-grip{opacity:1}
+.logo-grip{position:absolute;width:11px;height:11px;border:1.5px solid var(--accent);
+  background:#fff;border-radius:2px;cursor:nwse-resize;touch-action:none;
+  opacity:0;transition:opacity .12s;z-index:2}
+.logo-band:hover .logo-grip,.logo-grip.dragging{opacity:1}
 .dtitle{text-align:center;font-weight:700;font-size:13px}
 .dtitle div+div{margin-top:7px}
 .dmeta{margin:26px 0 30px;font-weight:700;font-size:12.5px}
@@ -300,6 +345,15 @@ label.f input:focus,label.f select:focus{outline:none;border-color:var(--accent)
 .dlegal{text-align:center;margin-top:4px}
 [contenteditable]{outline:none;border-radius:2px}
 [contenteditable]:focus{background:var(--accent-soft)}
+.row-grip{position:absolute;left:-16px;top:7px;width:14px;text-align:center;
+  color:var(--dashed);font-size:11px;cursor:grab;user-select:none;opacity:0;
+  transition:opacity .12s;line-height:1}
+.dl tr:hover .row-grip,.dtable tbody tr:hover .row-grip{opacity:1}
+.row-grip:active{cursor:grabbing}
+.dl td.lab,.dtable td:first-child{position:relative}
+tr.dragging{opacity:.45}
+tr.drop-above td{box-shadow:inset 0 2px 0 var(--accent)}
+tr.drop-below td{box-shadow:inset 0 -2px 0 var(--accent)}
 .tag{font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:.07em;
   padding:2px 5px;border-radius:4px;position:absolute;right:6px;top:6px;white-space:nowrap}
 .tag.med{background:var(--priv-soft);color:var(--priv)}
@@ -359,7 +413,18 @@ table.pt tr:last-child td{border-bottom:0}
 .modal{background:var(--surface);border-radius:14px;box-shadow:var(--sh-modal);
   width:min(520px,100%);padding:24px;max-height:90vh;overflow:auto}
 .modal h2{font-size:21px;margin-bottom:6px}
-.dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+.dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:0}
+@media(max-width:520px){.dl-grid{grid-template-columns:1fr}}
+.pagepick{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)}
+.pagepick-all,.pagepick-row{display:flex;align-items:center;gap:10px;padding:9px 13px;
+  font-size:13.5px;cursor:pointer}
+.pagepick-all{border-bottom:1px solid var(--border);background:var(--subtle);font-weight:500}
+.pagepick-row+.pagepick-row{border-top:1px solid var(--divider)}
+.pagepick-row:hover,.pagepick-all:hover{background:var(--hover)}
+.pagepick input{width:15px;height:15px;accent-color:var(--accent);flex:none}
+.pagepick .pn{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--faint);
+  width:16px;flex:none}
+.pagepick{max-height:210px;overflow:auto}
 .dl-tile{border:1px solid var(--border);border-radius:12px;padding:16px;text-align:left;
   background:var(--surface)}
 .dl-tile:hover:not(:disabled){border-color:var(--accent)}
@@ -381,6 +446,7 @@ table.pt tr:last-child td{border-bottom:0}
 
 @media print{
   #sidebar,#topbar,#panel,#toast,.scrim{display:none!important}
+  .sheet.not-printed{display:none!important}
   #app{display:block} #docscroll{overflow:visible;padding:0;background:#fff;display:block}
   .sheet{box-shadow:none;width:100%;max-width:none;aspect-ratio:auto;min-height:0;
     page-break-after:always;padding:34px 40px 64px}
@@ -396,7 +462,7 @@ table.pt tr:last-child td{border-bottom:0}
     <div class="side-top"><img src="smk-logo.png" alt="SMK Gateway"><span class="mono">Reports</span></div>
     <div class="side-actions">
       <button class="side-row" id="nav-new"><span class="plus">+</span> New report</button>
-      <button class="side-row" id="nav-tpl"><span style="width:20px;text-align:center;flex:none">▤</span> Report template</button>
+      <button class="side-row" id="nav-tpl"><span style="width:20px;text-align:center;flex:none">▤</span> Edit report template</button>
     </div>
     <div class="side-search"><input id="search" type="search" placeholder="Search reports" aria-label="Search reports"></div>
     <div class="side-scroll">

@@ -1,6 +1,6 @@
 /* pin, rename, move, mark read/unread, archive. */
 import puppeteer from 'puppeteer';
-import { loadSampleSingle } from './helpers.mjs';
+import { loadSampleSingle, makeProject, fileInto } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, x='') => console.log(`${v ? '✓' : '✗'} ${l}${x ? ' — ' + x : ''}`);
 const p = await b.newPage();
@@ -23,7 +23,9 @@ const pick = async (label) => {
 };
 
 // make two reports in two projects
+await makeProject(p, 'Spring 2026');
 await loadSampleSingle(p);
+await fileInto(p, 'Spring 2026');
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 await new Promise((r) => setTimeout(r, 900));

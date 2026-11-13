@@ -79,7 +79,7 @@ await p.waitForFunction(() => document.querySelector('#screen input')?.value ===
 t('new project created and opened', true);
 t('empty state shown', (await p.$eval('#screen', (x) => x.textContent)).includes('No reports here yet'));
 const projCount = await p.$$eval('#projects > .side-item', (x) => x.length);
-t(`sidebar shows ${projCount} projects`, projCount === 2);
+t(`sidebar shows ${projCount} project`, projCount === 1);
 
 await p.evaluate(() => { document.querySelector('#search').value = 'zzz'; document.querySelector('#search').dispatchEvent(new Event('input')); });
 t('search with no match shows message', (await p.$eval('#recents', (x) => x.textContent)).includes('No reports match'));
