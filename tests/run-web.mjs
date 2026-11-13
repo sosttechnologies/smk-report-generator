@@ -73,7 +73,7 @@ await buildOnce();
 
 // Run 1 — no provider: the deterministic template must carry the whole flow.
 {
-  const next = await startNext(3101, { LLM_PROVIDER: 'none', OPENROUTER_API_KEY: '', ANTHROPIC_API_KEY: '' });
+  const next = await startNext(3101, { LLM_PROVIDER: 'none', OPENROUTER_API_KEY: '', ANTHROPIC_API_KEY: '', AUTH_DISABLED: 'true' });
   try { allOk = report('no model configured', await runSuite('http://localhost:3101')) && allOk; }
   finally { next.kill(); }
 }
@@ -83,6 +83,7 @@ await buildOnce();
   const mock = await mockLlm(4390);
   const next = await startNext(3102, {
     LLM_PROVIDER: 'openai', OPENAI_API_KEY: 'test-key', LLM_BASE_URL: mock.url, LLM_MODEL: 'mock-model',
+    AUTH_DISABLED: 'true',
   });
   try {
     const ok = report('fake OpenAI-compatible model', await runSuite('http://localhost:3102'));

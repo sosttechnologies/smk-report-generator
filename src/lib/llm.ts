@@ -43,10 +43,20 @@ export function provider(): Provider {
   return 'none';
 }
 
+/*
+ * Defaults are chosen for cost, because SMK pay this bill every term.
+ *
+ * The job is turning tutors' own words into tidy British prose — not reasoning. An
+ * open-weight 70B does it for roughly 1-2% of a frontier model's price: a report is
+ * ~4k tokens in and ~2k out, so pennies per term rather than pounds. Override with
+ * LLM_MODEL if the writing is not good enough; the cheapest option of all is
+ * LLM_PROVIDER=none, which costs nothing and still produces a full report from the
+ * deterministic template.
+ */
 const DEFAULT_MODEL: Record<Provider, string> = {
-  anthropic: 'claude-opus-5',
-  openrouter: 'anthropic/claude-sonnet-4.5',
-  openai: 'gpt-4o',
+  anthropic: 'claude-haiku-4-5-20251001',
+  openrouter: 'meta-llama/llama-3.3-70b-instruct',
+  openai: 'gpt-4o-mini',
   ollama: 'llama3.3:70b',
   none: 'template',
 };
@@ -137,6 +147,11 @@ export async function complete(req: CompletionRequest): Promise<CompletionResult
     ],
   };
   if (req.json) body.response_format = { type: 'json_object' };
+  if (p === 'openrouter') {
+    // Many providers host the same open-weight model at different prices; take the
+    // cheapest that can serve the request.
+    body.provider = { sort: 'price' };
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

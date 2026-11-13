@@ -8,9 +8,8 @@ const nextConfig: NextConfig = {
       { source: '/app/', destination: '/app/index.html' },
     ];
   },
-  async redirects() {
-    return [{ source: '/', destination: '/app', permanent: false }];
-  },
+  // No bare "/" redirect any more: src/middleware.ts decides where someone lands,
+  // because an unauthenticated visitor must reach /signin and never /app.
 };
 
 export default nextConfig;
