@@ -75,6 +75,20 @@ Three things to keep stating plainly rather than burying:
 - Free-text scrubbing is imperfect. The only reliable control is what tutors are told to
   write in the Microsoft Form.
 
+## Pushing
+
+Commits reach GitHub automatically: a Stop hook in `.claude/settings.local.json` runs
+`scripts/auto-push.sh` after each turn, which pushes anything local that the remote does not
+have. It never creates commits — an auto-generated message is worse than none, and committing
+blindly would ship half-finished work — so it reports uncommitted files instead of hiding them.
+It always exits 0; a failed push cannot block a turn.
+
+`settings.local.json` is gitignored, so this is personal. A teammate cloning the repo does not
+inherit auto-push.
+
+Repo: `sosttechnologies/smk-report-generator`, **private**. It holds SMK's letterhead details
+and screenshots of their internal report format — keep it private.
+
 ## Shape of the thing
 
 **Input** — one row per student × subject × week, from a 10-question form:

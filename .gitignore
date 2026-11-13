@@ -14,3 +14,6 @@ smk-preview.html
 
 # Browser test scratch
 /tmp-shots/
+
+# Personal Claude Code settings (auto-push hook, extra permissions)
+.claude/settings.local.json
