@@ -16,6 +16,15 @@ submissions, drafts every section, lets staff edit, and exports the letterhead P
    name, comments or circumstances. The UK GDPR position on sending children's data to an
    LLM has **not** been settled with SIEVEMK — that must happen before this handles real data.
 
+## Two codebases in here, on purpose
+
+| Path | What it is |
+|---|---|
+| `src/` | Next.js app — the deployable one. Server-side key, Puppeteer PDF, API routes. |
+| `artifact2/` | The current UI, built to the second design handoff, published as a claude.ai Artifact. Client-side, so it can never hold an API key. |
+| `artifact/` | The first design. Superseded — kept only for reference. |
+| `engine.js` | `artifact2/engine.js` is a browser port of `src/lib/*`. **Keep them in step**: same parsing, same derived ratings, same pseudonymisation. |
+
 ## Running it
 
 ```bash
@@ -23,7 +32,11 @@ npm run dev       # http://localhost:3000
 npm run sample    # regenerate sample-data/smk-progress-forms-spring-2026.xlsx
 npm run check     # parse the sample export and print the aggregates
 npm run build
+npm test          # 121 browser assertions across 8 suites against artifact2/
 ```
+
+`npm test` drives a real Chromium through the whole app. It is the gate — run it before any
+publish. Suites live in `tests/`; `node tests/run.mjs 03` runs one.
 
 Copy `.env.example` to `.env.local` and set `ANTHROPIC_API_KEY` for Claude drafting.
 Without it the app still works: generation falls back to a deterministic template.
@@ -68,6 +81,8 @@ Three things to keep stating plainly rather than burying:
 student name, instructor name, subject, week beginning, weekly attendance, a
 STUDENT ENGAGEMENT grid, an ACADEMICS grid, concerns, key actions, general comments.
 See `.claude/skills/smk-form-schema/SKILL.md`.
+
+App shell, tokens and state model: `.claude/skills/smk-app-design/SKILL.md`.
 
 **Output** — one report per student per term: an overview page, an 8-column subject matrix,
 then eight label/body sections. See `.claude/skills/smk-report-format/SKILL.md`.

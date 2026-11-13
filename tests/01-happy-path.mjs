@@ -1,4 +1,4 @@
-/* Scenario 1: the happy path — sample data → generate → review → export gate. */
+/* the happy path — sample data → generate → review → export gate. */
 import puppeteer from 'puppeteer';
 const b = await puppeteer.launch({ headless: true });
 const p = await b.newPage();
@@ -15,7 +15,7 @@ t('upload screen is default', (await p.$eval('#screen', (n) => n.textContent)).i
 t('default project created', (await p.$$eval('#projects .side-item', (n) => n.length)) === 1);
 
 // load the sample
-await p.evaluate(() => [...document.querySelectorAll('.pill')].find((b) => b.textContent.includes('George')).click());
+await p.evaluate(() => document.querySelector('.linkish').click());
 await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'), { timeout: 15000 });
 t('sample file row shows Read', true);
 const detect = await p.$eval('.detect', (n) => n.textContent);

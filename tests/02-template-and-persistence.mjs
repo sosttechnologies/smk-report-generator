@@ -1,4 +1,4 @@
-/* Scenario 2: find the 404 and test template editing + persistence. */
+/* find the 404 and test template editing + persistence. */
 import puppeteer from 'puppeteer';
 const b = await puppeteer.launch({ headless: true });
 const p = await b.newPage();
@@ -15,7 +15,7 @@ console.log(bad.length ? bad.join('\n') : '(none)');
 const t = (l, v) => console.log(`${v ? '✓' : '✗'} ${l}`);
 
 // generate a report first
-await p.evaluate(() => [...document.querySelectorAll('.pill')].find((x) => x.textContent.includes('George')).click());
+await p.evaluate(() => document.querySelector('.linkish').click());
 await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });

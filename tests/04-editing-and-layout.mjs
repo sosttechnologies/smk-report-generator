@@ -1,4 +1,4 @@
-/* Scenario 4: editing, undo, delete/undo, projects, search, narrow layout, print. */
+/* editing, undo, delete/undo, projects, search, narrow layout, print. */
 import puppeteer from 'puppeteer';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, x='') => console.log(`${v ? '✓' : '✗'} ${l}${x ? ' — ' + x : ''}`);
@@ -10,7 +10,7 @@ await p.goto('http://localhost:4312/', { waitUntil: 'networkidle0' });
 await p.evaluate(() => localStorage.clear());
 await p.reload({ waitUntil: 'networkidle0' });
 
-await p.evaluate(() => [...document.querySelectorAll('.pill')].find((x) => x.textContent.includes('George')).click());
+await p.evaluate(() => document.querySelector('.linkish').click());
 await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });

@@ -11,3 +11,6 @@ out/
 *.pdf
 !docs/reference/*.pdf
 smk-preview.html
+
+# Browser test scratch
+/tmp-shots/

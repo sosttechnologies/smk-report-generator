@@ -16,7 +16,7 @@
    ============================================================ */
 :root{
   --page:#F7F6F3; --side:#F1EFEA; --canvas:#EFEDE8; --surface:#FFFFFF;
-  --subtle:#FBFAF8; --subtle-2:#F5F3EF; --track:#EDEAE4; --hover:#E8E5DE;
+  --subtle:#FBFAF8; --subtle-2:#F5F3EF; --track:#EDEAE4; --hover:#E8E5DE; --active:#DBD6CB;
   --ink:#1B1A17; --body:#2A2925; --body-2:#4A4843; --muted:#6B6862; --faint:#9A968E;
   --border:#E6E3DC; --divider:#EFECE6; --dashed:#CFCAC0; --off:#D9D5CD;
   --accent:oklch(0.5 0.16 262); --accent-soft:oklch(0.95 0.03 262);
@@ -75,14 +75,27 @@ h1,h2,h3{font-family:'Hanken Grotesk',system-ui,sans-serif;font-weight:600;lette
 .side-search input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
 .side-scroll{flex:1;overflow:auto;padding:0 10px 10px;min-height:0}
 .side-head{display:flex;align-items:center;justify-content:space-between;
-  padding:12px 10px 6px}
+  gap:8px;padding:12px 10px 6px;min-height:26px}
 .side-head button{width:22px;height:22px;border-radius:6px;background:none;border:0;
   color:var(--muted);display:grid;place-items:center;font-size:15px}
 .side-head button:hover{background:var(--hover);color:var(--ink)}
 .side-item{display:block;width:100%;text-align:left;background:none;border:0;
   padding:7px 10px;border-radius:8px;position:relative}
 .side-item:hover{background:var(--hover)}
-.side-item.on{background:var(--hover)}
+.side-item.on{background:var(--active)}
+.side-item.on:hover{background:var(--active)}
+.side-row.on{background:var(--active)}
+.dim-row{opacity:.58}
+.dim-row:hover{opacity:.85}
+.pin-ic{font-size:9px;margin-right:5px;opacity:.75;vertical-align:1px}
+.unread-dot{display:inline-block;width:6px;height:6px;border-radius:999px;
+  background:var(--accent);margin-right:6px;vertical-align:1px}
+/* Overrides the 22px square sizing .side-head button applies to the "+" icon,
+   which was squashing this label and overlapping the group heading below it. */
+.side-head .arch-tog{width:auto;height:auto;display:inline;background:none;border:0;
+  padding:0;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--faint);white-space:nowrap}
+.side-head .arch-tog:hover{background:none;color:var(--body)}
 .side-item .l1{font-size:13px;color:var(--body);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;padding-right:22px}
 .side-item.on .l1{font-weight:500;color:var(--ink)}
@@ -119,10 +132,23 @@ h1.display .alt{color:var(--muted);display:block}
 
 /* ---------- upload ---------- */
 #drop{margin-top:28px;border:1.5px dashed var(--dashed);border-radius:14px;
-  background:var(--surface);padding:44px 26px;text-align:center;transition:.14s}
+  background:var(--surface);padding:44px 26px 38px;text-align:center;transition:.14s;cursor:pointer}
+#drop:hover{border-color:var(--muted)}
 #drop.over{border-color:var(--accent);background:var(--accent-soft)}
 #drop p{margin:0 0 6px;font-size:15px}
-#drop .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+#drop .sub{color:var(--muted);font-size:13px;margin-bottom:0}
+.drop-ic{width:30px;height:30px;color:var(--muted);margin-bottom:12px;display:block;
+  margin-left:auto;margin-right:auto}
+#drop:hover .drop-ic,#drop.over .drop-ic{color:var(--accent)}
+.browse{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.fmts{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:16px}
+.fmt{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.04em;
+  color:var(--muted);background:var(--subtle-2);border:1px solid var(--border);
+  border-radius:999px;padding:3px 9px}
+.try-line{margin:14px 0 0;font-size:13px;color:var(--faint);text-align:center}
+.linkish{background:none;border:0;padding:0;font-size:13px;color:var(--muted);
+  text-decoration:underline;text-underline-offset:2px}
+.linkish:hover{color:var(--ink)}
 .pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);
   background:var(--surface);border-radius:999px;padding:6px 14px;font-size:12.5px;color:var(--body)}
 .pill:hover{border-color:var(--dashed)}
@@ -211,8 +237,12 @@ label.f input:focus,label.f select:focus{outline:none;border-color:var(--accent)
   font-family:Carlito,Calibri,sans-serif;color:#111;font-size:13px;line-height:1.45;
   flex:none;overflow:hidden}
 .sheet.auto{aspect-ratio:auto;min-height:auto}
-.dlogo{height:52px;width:auto;display:block;margin-bottom:18px;cursor:pointer;
-  mix-blend-mode:multiply}
+.logo-band{position:relative;height:62px;margin-bottom:14px}
+.dlogo{position:absolute;top:0;height:auto;max-width:70%;cursor:grab;
+  mix-blend-mode:multiply;touch-action:none;user-select:none;
+  outline:1px dashed transparent;outline-offset:4px;border-radius:2px;transition:outline-color .12s}
+.dlogo:hover{outline-color:var(--dashed)}
+.dlogo.dragging{cursor:grabbing;outline-color:var(--accent);opacity:.85}
 .dtitle{text-align:center;font-weight:700;font-size:13px}
 .dtitle div+div{margin-top:7px}
 .dmeta{margin:26px 0 30px;font-weight:700;font-size:12.5px}
@@ -267,6 +297,8 @@ label.f input:focus,label.f select:focus{outline:none;border-color:var(--accent)
 .mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .mini{background:var(--surface);box-shadow:0 1px 2px rgba(27,26,23,.09);aspect-ratio:1/1.414;
   padding:8px;display:flex;flex-direction:column;gap:3px;border-radius:2px}
+.mini-logo-band{position:relative;height:13px;margin-bottom:3px;flex:none}
+.mini-logo{position:absolute;top:0;height:auto;max-width:72%;mix-blend-mode:multiply}
 .mini b{font-size:5px;color:#111;font-weight:700;display:block}
 .mini i{display:block;height:2.5px;background:#DEDAD2;border-radius:1px}
 textarea.ta{width:100%;border:1px solid var(--border);border-radius:9px;padding:10px 12px;
@@ -305,7 +337,10 @@ table.pt tr:last-child td{border-bottom:0}
   border-radius:10px;box-shadow:var(--sh-pop);padding:5px;z-index:60;min-width:150px}
 .menu button{display:block;width:100%;text-align:left;background:none;border:0;
   padding:7px 10px;border-radius:7px;font-size:13px;color:var(--body)}
+.menu button{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .menu button:hover{background:var(--hover)}
+.menu-div{height:1px;background:var(--divider);margin:4px 6px}
+.menu .chev{color:var(--faint);font-size:12px}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);
   color:#fff;border-radius:10px;padding:11px 16px;font-size:13.5px;z-index:70;
   display:flex;align-items:center;gap:14px;box-shadow:var(--sh-pop);max-width:92vw}

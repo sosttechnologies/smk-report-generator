@@ -25,7 +25,7 @@ let sample = null, downloads = null;
 /* ================= template ================= */
 function defaultTemplate() {
   return {
-    logo: null, logoPos: 'left', logoSize: 140,
+    logo: null, logoPos: 'left', logoSize: 140, logoX: 0, logoY: 0,
     header: {
       title: 'INTERIM TERMLY REPORT', date: 'REPORTING DATE: 4 MAY TO 11 JUNE 2026',
       studentLabel: 'STUDENT', yearLabel: 'YEAR',
@@ -66,7 +66,7 @@ const LS = 'smk-report-generator-v1';
 const state = {
   user: { name: 'Precious Joshua', org: 'SMK Gateway' },
   projects: [], reports: [], template: defaultTemplate(),
-  screen: 'upload', activeProject: null, activeReport: null,
+  screen: 'upload', activeProject: null, activeReport: null, showArchived: false,
   selSection: null, search: '', upload: null, gen: null,
 };
 
@@ -91,8 +91,9 @@ function load() {
 }
 
 function ensureProject() {
-  if (!state.projects.length) state.projects.push({ id: uid(), name: 'My first project' });
-  if (!state.activeProject) state.activeProject = state.projects[0].id;
+  if (!state.projects.some((p) => !p.archived)) state.projects.push({ id: uid(), name: 'My first project' });
+  const active = projectOf(state.activeProject);
+  if (!active || active.archived) state.activeProject = state.projects.find((p) => !p.archived).id;
   return state.activeProject;
 }
 
@@ -404,6 +405,7 @@ async function runGeneration(term, meta) {
   const report = {
     id: uid(), projectId: meta.projectId, student: term.studentName, keyStage: meta.keyStage || '',
     status: 'Draft', updatedAt: Date.now(), createdAt: Date.now(),
+    pinned: false, archived: false, unread: false,
     term, blocks, flags, reviewed: {}, history: {},
     matrix: E.buildMatrix(term, { tiers: {}, averageGrades: {} }, content),
     header: { ...tpl.header }, footer: { ...tpl.footer }, logo: tpl.logo,
@@ -462,19 +464,27 @@ function confirmDialog({ title, body, danger = 'Delete', onYes }) {
   yes.focus();
 }
 
-function popMenu(anchor, items) {
-  closeOverlay();
+function popMenu(anchor, items, opts = {}) {
+  if (!opts.nested) closeOverlay();
   const r = anchor.getBoundingClientRect();
   const m = el('div', 'menu');
-  m.style.left = `${Math.min(r.left, innerWidth - 170)}px`;
-  m.style.top = `${r.bottom + 4}px`;
+  m.style.left = `${Math.min(opts.nested ? r.right + 4 : r.left, innerWidth - 190)}px`;
+  m.style.top = `${Math.min(opts.nested ? r.top : r.bottom + 4, innerHeight - 40 - items.length * 32)}px`;
   for (const it of items) {
-    const b = el('button', it.danger ? 'btn-danger' : null, it.label);
-    b.onclick = (e) => { e.stopPropagation(); closeOverlay(); it.run(); };
+    if (it.divider) { m.append(el('div', 'menu-div')); continue; }
+    const b = el('button', it.danger ? 'btn-danger' : null);
+    b.append(el('span', null, it.label));
+    if (it.items) b.append(Object.assign(el('span', 'chev'), { textContent: '›' }));
+    if (it.check) b.append(Object.assign(el('span', 'chev'), { textContent: '✓' }));
+    if (it.items) {
+      b.onclick = (e) => { e.stopPropagation(); m.querySelectorAll('.menu').forEach((n) => n.remove()); popMenu(b, it.items, { nested: true }); };
+    } else {
+      b.onclick = (e) => { e.stopPropagation(); closeOverlay(); it.run(); };
+    }
     m.append(b);
   }
   $('#overlay').append(m);
-  setTimeout(() => document.addEventListener('click', closeOverlay, { once: true }), 0);
+  if (!opts.nested) setTimeout(() => document.addEventListener('click', closeOverlay, { once: true }), 0);
 }
 
 /* ================= sidebar ================= */
@@ -492,56 +502,213 @@ function renderSidebar() {
   $('#acct-name').textContent = state.user.name;
   $('#acct-ini').textContent = initials(state.user.name);
 
+  /* ---- projects: pinned first, archived tucked away ---- */
   const pc = $('#projects'); pc.innerHTML = '';
-  for (const p of state.projects) {
-    const b = el('button', 'side-item' + (state.screen === 'project' && state.activeProject === p.id ? ' on' : ''));
-    const n = reportsIn(p.id).length;
-    b.innerHTML = `<span class="l1">▸ ${esc(p.name)} <span style="color:var(--faint);font-weight:400">${n || ''}</span></span>`;
-    b.onclick = () => { state.activeProject = p.id; state.screen = 'project'; render(); };
+  const live = state.projects.filter((p) => !p.archived);
+  const ordered = [...live.filter((p) => p.pinned), ...live.filter((p) => !p.pinned)];
+
+  for (const proj of ordered) {
+    const on = state.screen === 'project' && state.activeProject === proj.id;
+    const b = el('button', 'side-item' + (on ? ' on' : ''));
+    const n = reportsIn(proj.id).filter((r) => !r.archived).length;
+    const l1 = el('span', 'l1');
+    if (proj.pinned) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
+    l1.append(document.createTextNode(`▸ ${proj.name} `));
+    l1.append(Object.assign(el('span'), { textContent: n || '', style: 'color:var(--faint);font-weight:400' }));
+    b.append(l1);
+    b.onclick = () => { state.activeProject = proj.id; state.screen = 'project'; render(); };
     const d = el('button', 'dots', '⋯');
-    d.setAttribute('aria-label', `Options for ${p.name}`);
+    d.setAttribute('aria-label', `Options for ${proj.name}`);
     d.onclick = (e) => {
       e.stopPropagation();
       popMenu(d, [
-        { label: 'Rename', run: () => renameProject(p.id) },
-        { label: 'Delete', danger: true, run: () => deleteProject(p.id) },
+        { label: proj.pinned ? 'Unpin' : 'Pin', check: !!proj.pinned, run: () => toggleFlag(proj, 'pinned', [`Pinned “${proj.name}”`, `Unpinned “${proj.name}”`]) },
+        { label: 'Rename', run: () => renameProject(proj.id, b) },
+        { divider: true },
+        { label: 'Archive', run: () => archiveProject(proj.id) },
+        { label: 'Delete', danger: true, run: () => deleteProject(proj.id) },
       ]);
     };
     b.append(d); pc.append(b);
   }
 
+  const archivedProjects = state.projects.filter((p) => p.archived);
+  if (archivedProjects.length) {
+    const h = el('div', 'side-head');
+    const tog = el('button', 'arch-tog', `${state.showArchived ? '▾' : '▸'} Archived (${archivedProjects.length + state.reports.filter((r) => r.archived).length})`);
+    tog.onclick = () => { state.showArchived = !state.showArchived; renderSidebar(); };
+    h.append(tog); pc.append(h);
+    if (state.showArchived) {
+      for (const proj of archivedProjects) {
+        const b = el('button', 'side-item dim-row');
+        b.append(Object.assign(el('span', 'l1'), { textContent: `▸ ${proj.name}` }));
+        b.onclick = () => { state.activeProject = proj.id; state.screen = 'project'; render(); };
+        const d = el('button', 'dots', '⋯');
+        d.onclick = (e) => {
+          e.stopPropagation();
+          popMenu(d, [
+            { label: 'Unarchive', run: () => toggleFlag(proj, 'archived', ['', `Restored “${proj.name}”`]) },
+            { label: 'Delete', danger: true, run: () => deleteProject(proj.id) },
+          ]);
+        };
+        b.append(d); pc.append(b);
+      }
+    }
+  }
+
+  /* ---- recents ---- */
   const q = state.search.trim().toLowerCase();
-  const list = state.reports
+  const all = state.reports
     .filter((r) => !q || r.student.toLowerCase().includes(q))
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  const visible = all.filter((r) => !r.archived);
+  const archivedReports = all.filter((r) => r.archived);
 
   const rc = $('#recents'); rc.innerHTML = '';
-  if (!list.length && q) {
+  if (!all.length && q) {
     rc.append(Object.assign(el('div', null, 'No reports match.'), { style: 'padding:14px 10px;font-size:12.5px;color:var(--faint)' }));
     return;
   }
-  for (const [label, items] of Object.entries(groupRecents(list))) {
+
+  const makeRow = (r, dimmed) => {
+    const on = state.screen === 'report' && state.activeReport === r.id;
+    const b = el('button', 'side-item' + (on ? ' on' : '') + (dimmed ? ' dim-row' : ''));
+    const l1 = el('span', 'l1');
+    if (r.unread) l1.append(el('span', 'unread-dot'));
+    if (r.pinned) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
+    l1.append(document.createTextNode(`${r.student} — Termly report`));
+    if (r.unread) l1.style.fontWeight = '600';
+    b.append(l1);
+    b.append(Object.assign(el('span', 'l2'), {
+      textContent: `${projectOf(r.projectId)?.name ?? 'No project'} · ${r.status}`,
+    }));
+    b.onclick = () => {
+      state.activeReport = r.id; state.selSection = null; state.screen = 'report';
+      r.unread = false; save(); render();
+    };
+    const d = el('button', 'dots', '⋯');
+    d.setAttribute('aria-label', `Options for ${r.student}'s report`);
+    d.onclick = (e) => {
+      e.stopPropagation();
+      const others = state.projects.filter((p) => !p.archived);
+      popMenu(d, [
+        { label: r.pinned ? 'Unpin' : 'Pin', check: !!r.pinned, run: () => toggleFlag(r, 'pinned', [`Pinned ${r.student}`, `Unpinned ${r.student}`]) },
+        { label: 'Rename', run: () => renameReport(r.id, b) },
+        { label: 'Move to project', items: others.map((proj) => ({
+            label: proj.name + (proj.id === r.projectId ? '  ·  current' : ''),
+            run: () => { if (proj.id !== r.projectId) moveReport(r.id, proj.id); },
+          })).concat([{ divider: true }, { label: '+ New project…', run: () => {
+            const proj = { id: uid(), name: 'Untitled project' };
+            state.projects.push(proj); moveReport(r.id, proj.id);
+          } }]) },
+        { label: r.unread ? 'Mark as read' : 'Mark as unread', run: () => toggleFlag(r, 'unread', [`Marked unread`, `Marked read`]) },
+        { divider: true },
+        { label: r.archived ? 'Unarchive' : 'Archive', run: () => archiveReport(r.id) },
+        { label: 'Delete', danger: true, run: () => deleteReport(r.id) },
+      ]);
+    };
+    b.append(d);
+    return b;
+  };
+
+  const pinned = visible.filter((r) => r.pinned);
+  if (pinned.length) {
+    const h = el('div', 'side-head'); h.append(el('span', 'mono', 'Pinned')); rc.append(h);
+    pinned.forEach((r) => rc.append(makeRow(r)));
+  }
+  for (const [label, items] of Object.entries(groupRecents(visible.filter((r) => !r.pinned)))) {
     if (!items.length) continue;
+    const h = el('div', 'side-head'); h.append(el('span', 'mono', label)); rc.append(h);
+    items.forEach((r) => rc.append(makeRow(r)));
+  }
+  if (archivedReports.length && !archivedProjects.length) {
     const h = el('div', 'side-head');
-    h.append(el('span', 'mono', label));
-    rc.append(h);
-    for (const r of items) {
-      const b = el('button', 'side-item' + (state.screen === 'report' && state.activeReport === r.id ? ' on' : ''));
-      b.innerHTML = `<span class="l1">${esc(r.student)} — Termly report</span>
-        <span class="l2">${esc(projectOf(r.projectId)?.name ?? 'No project')} · ${r.status}</span>`;
-      b.onclick = () => { state.activeReport = r.id; state.selSection = null; state.screen = 'report'; render(); };
-      const d = el('button', 'dots', '⋯');
-      d.setAttribute('aria-label', `Options for ${r.student}'s report`);
-      d.onclick = (e) => { e.stopPropagation(); popMenu(d, [{ label: 'Delete', danger: true, run: () => deleteReport(r.id) }]); };
-      b.append(d); rc.append(b);
-    }
+    const tog = el('button', 'arch-tog', `${state.showArchived ? '▾' : '▸'} Archived (${archivedReports.length})`);
+    tog.onclick = () => { state.showArchived = !state.showArchived; renderSidebar(); };
+    h.append(tog); rc.append(h);
+  }
+  if (archivedReports.length && state.showArchived) {
+    archivedReports.forEach((r) => rc.append(makeRow(r, true)));
   }
 }
 
-function renameProject(id) {
-  const p = projectOf(id); if (!p) return;
-  const name = prompt('Project name', p.name);
-  if (name && name.trim()) { p.name = name.trim(); save(); render(); }
+function archiveProject(id) {
+  const proj = projectOf(id); if (!proj) return;
+  proj.archived = true;
+  const touched = reportsIn(id).filter((r) => !r.archived);
+  touched.forEach((r) => { r.archived = true; });
+  if (state.activeProject === id) { state.activeProject = state.projects.find((p) => !p.archived)?.id ?? null; }
+  if (touched.some((r) => r.id === state.activeReport)) { state.activeReport = null; state.screen = 'upload'; }
+  ensureProject(); save(); render();
+  toast(`Archived “${proj.name}”${touched.length ? ` and ${touched.length} report${touched.length === 1 ? '' : 's'}` : ''}`, () => {
+    proj.archived = false; touched.forEach((r) => { r.archived = false; }); save(); render();
+  });
+}
+
+function archiveReport(id) {
+  const r = reportOf(id); if (!r) return;
+  const was = !!r.archived;
+  r.archived = !was;
+  if (!was && state.activeReport === id) { state.activeReport = null; state.screen = 'upload'; }
+  save(); render();
+  if (!was) toast(`Archived ${r.student}'s report`, () => { r.archived = false; save(); render(); });
+  else toast(`Restored ${r.student}'s report`);
+}
+
+/** Inline rename: the row becomes an input with the text selected, as in the handoff. */
+function inlineRename(rowEl, current, commit) {
+  const input = el('input', 'rename-input');
+  input.value = current;
+  const l1 = rowEl.querySelector('.l1');
+  if (!l1) return;
+  const prev = l1.innerHTML;
+  l1.innerHTML = '';
+  l1.append(input);
+  input.focus(); input.select();
+  let settled = false;
+  const finish = (ok) => {
+    if (settled) return;
+    settled = true;
+    const v = input.value.trim();
+    if (ok && v) commit(v); else l1.innerHTML = prev;
+    render();
+  };
+  input.onclick = (e) => e.stopPropagation();
+  input.onblur = () => finish(true);
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
+}
+
+function renameProject(id, rowEl) {
+  const p = projectOf(id); if (!p || !rowEl) return;
+  inlineRename(rowEl, p.name, (v) => { p.name = v; save(); });
+}
+
+function renameReport(id, rowEl) {
+  const r = reportOf(id); if (!r || !rowEl) return;
+  inlineRename(rowEl, r.student, (v) => { r.student = v; r.updatedAt = Date.now(); save(); });
+}
+
+function moveReport(id, projectId) {
+  const r = reportOf(id); if (!r) return;
+  const from = projectOf(r.projectId)?.name ?? 'nowhere';
+  r.projectId = projectId;
+  r.updatedAt = Date.now();
+  save(); render();
+  toast(`Moved to ${projectOf(projectId)?.name}`, () => {
+    r.projectId = state.projects.find((p) => p.name === from)?.id ?? r.projectId;
+    save(); render();
+  });
+}
+
+function toggleFlag(obj, key, labels) {
+  obj[key] = !obj[key];
+  if (obj.updatedAt) obj.updatedAt = Date.now();
+  save(); render();
+  toast(obj[key] ? labels[0] : labels[1]);
 }
 
 function deleteProject(id) {
@@ -634,11 +801,19 @@ function screenUpload() {
   }));
 
   const drop = el('div'); drop.id = 'drop';
-  drop.innerHTML = `<p>Drop files here, or click to choose</p>
-    <p class="sub">Forms exports (.xlsx, .csv) are read on this device. PDF, Word and photos are read by Claude.</p>`;
-  const pill = el('button', 'pill', "Use George Holmes's Spring forms");
-  pill.onclick = (e) => { e.stopPropagation(); loadSample(); };
-  drop.append(pill);
+  drop.innerHTML = `
+    <svg class="drop-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke="currentColor" stroke-width="1.6"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M3.5 15v2.5A2.5 2.5 0 0 0 6 20h12a2.5 2.5 0 0 0 2.5-2.5V15" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <p>Drag files here, or <span class="browse">browse your computer</span></p>
+    <p class="sub">Add everything you have for one student — weekly forms, progress reports, a term's worth at once.</p>
+    <div class="fmts">
+      <span class="fmt">.xlsx</span><span class="fmt">.csv</span><span class="fmt">.pdf</span>
+      <span class="fmt">.docx</span><span class="fmt">.png</span><span class="fmt">.jpg</span>
+    </div>`;
   drop.onclick = () => $('#file-input').click();
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
@@ -647,6 +822,13 @@ function screenUpload() {
     if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
   });
   wrap.append(drop);
+
+  const tryIt = el('p', 'try-line');
+  tryIt.append(document.createTextNode('No files to hand? '));
+  const sampleLink = el('button', 'linkish', "Try it with George Holmes's sample forms");
+  sampleLink.onclick = () => loadSample();
+  tryIt.append(sampleLink);
+  wrap.append(tryIt);
 
   const u = state.upload;
   if (u?.files?.length) {
@@ -812,19 +994,62 @@ function docFooter(r) {
   return f;
 }
 
-function docPage(r, auto) {
-  const p = el('section', 'sheet' + (auto ? ' auto' : ''));
+/** The logo band at the top of every page: the logo can be dragged within it,
+    and a plain click (no drag) replaces the image — as the handoff specifies. */
+function docLogo(r) {
+  const t = state.template;
+  const band = el('div', 'logo-band');
   const img = el('img', 'dlogo');
   img.src = r.logo || 'smk-logo.png';
   img.alt = 'SMK Gateway';
-  img.style.height = `${Math.max(32, Math.min(90, (state.template.logoSize || 140) * 0.37))}px`;
-  img.style.marginLeft = state.template.logoPos === 'center' ? 'auto' : '';
-  img.style.marginRight = state.template.logoPos === 'center' ? 'auto'
-    : state.template.logoPos === 'right' ? '0' : '';
-  if (state.template.logoPos === 'right') img.style.marginLeft = 'auto';
-  img.title = 'Click to replace the logo';
-  img.onclick = () => { logoTarget = 'report'; $('#logo-input').click(); };
-  p.append(img);
+  img.draggable = false;
+  img.style.width = `${t.logoSize}px`;
+  img.style.left = t.logoPos === 'center' ? '50%' : t.logoPos === 'right' ? 'auto' : '0';
+  img.style.right = t.logoPos === 'right' ? '0' : 'auto';
+  img.style.transform = `translate(${t.logoX || 0}px, ${t.logoY || 0}px)`
+    + (t.logoPos === 'center' ? ' translateX(-50%)' : '');
+  img.title = 'Drag to move · click to replace';
+
+  let drag = null;
+  img.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    // Capture can throw if the pointer is already gone; losing capture only costs
+    // us drag-outside-the-element, so never let it take the whole handler down.
+    try { img.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    drag = { sx: e.clientX, sy: e.clientY, ox: t.logoX || 0, oy: t.logoY || 0, moved: false };
+    img.classList.add('dragging');
+  });
+  img.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    // Clamp inside the band so the logo cannot be dragged off the page.
+    t.logoX = Math.max(-40, Math.min(430, drag.ox + dx));
+    t.logoY = Math.max(-14, Math.min(46, drag.oy + dy));
+    document.querySelectorAll('.dlogo').forEach((n) => {
+      n.style.transform = `translate(${t.logoX}px, ${t.logoY}px)`
+        + (t.logoPos === 'center' ? ' translateX(-50%)' : '');
+    });
+    renderMini();
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const moved = drag.moved;
+    drag = null;
+    img.classList.remove('dragging');
+    if (moved) { save(); toast('Logo moved on every page'); }
+    else { logoTarget = 'report'; $('#logo-input').click(); }
+  };
+  img.addEventListener('pointerup', end);
+  img.addEventListener('pointercancel', () => { drag = null; img.classList.remove('dragging'); });
+
+  band.append(img);
+  return band;
+}
+
+function docPage(r, auto) {
+  const p = el('section', 'sheet' + (auto ? ' auto' : ''));
+  p.append(docLogo(r));
   return p;
 }
 
@@ -1104,22 +1329,45 @@ function screenTemplate() {
   const logoRow = el('div');
   logoRow.style.cssText = 'display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap';
   const lp = el('img'); lp.src = t.logo || 'smk-logo.png'; lp.alt = 'Logo';
-  lp.style.cssText = 'height:40px;mix-blend-mode:multiply';
+  lp.style.cssText = `width:${Math.round(t.logoSize * 0.34)}px;height:auto;mix-blend-mode:multiply`;
   const rep = el('button', 'btn-2', 'Replace logo');
   rep.onclick = () => { logoTarget = 'template'; $('#logo-input').click(); };
   const rst = el('button', 'btn-ghost', 'Reset');
-  rst.onclick = () => { t.logo = null; save(); render(); };
+  rst.onclick = () => { t.logo = null; t.logoSize = 140; t.logoX = 0; t.logoY = 0; save(); render(); };
   const posSel = el('select');
   posSel.style.cssText = 'height:36px;border:1px solid var(--border);border-radius:8px;padding:0 8px';
-  for (const p of ['left', 'center', 'right']) {
-    const o = el('option', null, p[0].toUpperCase() + p.slice(1)); o.value = p;
-    if (t.logoPos === p) o.selected = true; posSel.append(o);
+  for (const pos of ['left', 'center', 'right']) {
+    const o = el('option', null, pos[0].toUpperCase() + pos.slice(1)); o.value = pos;
+    if (t.logoPos === pos) o.selected = true; posSel.append(o);
   }
-  posSel.onchange = () => { t.logoPos = posSel.value; save(); render(); };
-  const sz = el('input'); sz.type = 'range'; sz.min = '70'; sz.max = '260'; sz.value = t.logoSize;
-  sz.oninput = () => { t.logoSize = +sz.value; save(); renderDocument(); renderMini(); };
-  logoRow.append(lp, rep, rst, posSel, sz);
+  posSel.onchange = () => { t.logoPos = posSel.value; t.logoX = 0; t.logoY = 0; save(); render(); };
+  logoRow.append(lp, rep, rst, posSel);
   b1.append(logoRow);
+
+  const szRow = el('div');
+  szRow.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap';
+  szRow.append(Object.assign(el('span'), { textContent: 'Size', style: 'font-size:11.5px;color:var(--muted);font-weight:500' }));
+  const sz = el('input'); sz.type = 'range'; sz.min = '70'; sz.max = '260'; sz.value = t.logoSize;
+  sz.style.flex = '1'; sz.setAttribute('aria-label', 'Logo size');
+  const szVal = el('span', 'mono', `${t.logoSize}px`);
+  sz.oninput = () => {
+    t.logoSize = +sz.value;
+    szVal.textContent = `${t.logoSize}px`;
+    lp.style.width = `${Math.round(t.logoSize * 0.34)}px`;
+    save(); renderMini();
+  };
+  szRow.append(sz, szVal);
+  const posNote = el('span');
+  posNote.style.cssText = 'font-size:12px;color:var(--faint);width:100%';
+  posNote.textContent = (t.logoX || t.logoY)
+    ? `Nudged ${Math.round(t.logoX)}px across, ${Math.round(t.logoY)}px down — drag it on the report to adjust.`
+    : 'Drag the logo on any report page to place it exactly.';
+  const resetPos = el('button', 'btn-ghost', 'Reset position');
+  resetPos.style.cssText = 'padding:0;text-decoration:underline;font-size:12px';
+  resetPos.onclick = () => { t.logoX = 0; t.logoY = 0; save(); render(); };
+  if (t.logoX || t.logoY) posNote.append(document.createTextNode(' '), resetPos);
+  szRow.append(posNote);
+  b1.append(szRow);
 
   const fg = el('div', 'grid3');
   const tf = (label, obj, key) => {
@@ -1246,6 +1494,19 @@ function renderMini() {
   for (let i = 0; i < rest.length; i += 2) pages.push(rest.slice(i, i + 2).map((s) => s.label));
   for (const labels of pages) {
     const p = el('div', 'mini');
+    const band = el('div', 'mini-logo-band');
+    const li = el('img', 'mini-logo');
+    li.src = state.template.logo || 'smk-logo.png';
+    li.alt = '';
+    // The mini page is ~1/8 the width of the A4 sheet, so scale the logo to match.
+    const scale = 0.115;
+    li.style.width = `${Math.max(8, t.logoSize * scale)}px`;
+    li.style.left = t.logoPos === 'center' ? '50%' : t.logoPos === 'right' ? 'auto' : '0';
+    li.style.right = t.logoPos === 'right' ? '0' : 'auto';
+    li.style.transform = `translate(${(t.logoX || 0) * scale}px, ${(t.logoY || 0) * scale}px)`
+      + (t.logoPos === 'center' ? ' translateX(-50%)' : '');
+    band.append(li);
+    p.append(band);
     for (const l of labels) {
       p.append(Object.assign(el('b'), { textContent: l }));
       for (let k = 0; k < 4; k++) {
@@ -1269,7 +1530,7 @@ function screenProject() {
   nameInput.onchange = () => { p.name = nameInput.value.trim() || 'Untitled project'; save(); render(); };
   h.append(nameInput);
   wrap.append(h);
-  const rs = reportsIn(p.id);
+  const rs = reportsIn(p.id).filter((r) => !r.archived);
   wrap.append(Object.assign(el('p', 'lede'), { textContent: `${rs.length} report${rs.length === 1 ? '' : 's'}` }));
 
   const bar = el('div');

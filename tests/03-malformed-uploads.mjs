@@ -1,4 +1,4 @@
-/* Scenario 3: malformed and awkward uploads must degrade, never crash. */
+/* malformed and awkward uploads must degrade, never crash. */
 import puppeteer from 'puppeteer';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, extra='') => console.log(`${v ? '✓' : '✗'} ${l}${extra ? ' — ' + extra : ''}`);
