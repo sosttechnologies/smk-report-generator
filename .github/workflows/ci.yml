@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      # The privacy boundary is a hard gate: if a real name can reach a drafting
+      # prompt, the build does not ship. See src/lib/pseudonymise.ts.
+      - name: No student name reaches a model
+        run: npm run check:privacy
+
+      - name: Parse + aggregate the sample export
+        run: npm run check
+
+      - name: Browser tests
+        run: |
+          npx puppeteer browsers install chrome
+          npm test

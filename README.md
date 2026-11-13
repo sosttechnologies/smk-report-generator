@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SMK Gateway — Termly Report Generator
 
-## Getting Started
+Internal staff tool for **SMK Gateway (SIEVEMK)**, a Milton Keynes education charity
+(company 7886477, registered charity 1146451).
 
-First, run the development server:
+Tutors submit a weekly Microsoft Form per student, per subject. Staff currently retype those
+responses by hand into a six-page *Interim Termly Report* for the student's family. This reads
+the submissions, drafts every section, lets staff edit and review, and exports the letterhead
+document.
+
+Built by **SOST Technologies**.
+
+## Two hard rules
+
+1. **Nothing exports until every section has been reviewed by a person.** These are reports
+   about children, read by their families.
+2. **No real student data in this repository.** Everything in `sample-data/` is invented. The
+   UK GDPR position — the report carries Article 9 special category health data about children
+   — is unresolved, and a DPIA is required before this touches a real record.
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npx puppeteer browsers install chrome   # PDF export and the browser tests
+cp .env.example .env.local              # add ANTHROPIC_API_KEY for Claude drafting
+
+npm run dev        # http://localhost:3000
+npm test           # 121 browser assertions across 8 suites
+npm run check      # parse + aggregate the sample export
+npm run check:privacy
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Without an API key the app still works end to end: drafting falls back to a deterministic
+template built from the tutors' own words.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Path | What it is |
+|---|---|
+| `src/` | Next.js app — the deployable one. Server-side key, Puppeteer PDF. |
+| `artifact2/` | Current UI, built to the second design handoff, published as a claude.ai Artifact. |
+| `artifact/` | First design. Superseded, kept for reference. |
+| `tests/` | Browser tests driven by `npm test`. |
+| `docs/reference/` | The real report and form screenshots. **These are the spec.** |
+| `.claude/skills/` | Form schema, report format and app design — read before changing those areas. |
 
-## Learn More
+`artifact2/engine.js` is a browser port of `src/lib/*`. Keep them in step.
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Full context for contributors, human or agent: [`CLAUDE.md`](CLAUDE.md).
