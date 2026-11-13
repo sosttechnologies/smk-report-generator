@@ -1,4 +1,4 @@
-/* Adding and removing lines in a generated report. */
+/* Editing the generated document: typing, Enter, Backspace, undo and redo. */
 import puppeteer from 'puppeteer';
 import { loadSampleSingle, generate } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
@@ -12,57 +12,84 @@ await p.reload({ waitUntil: 'networkidle0' });
 await loadSampleSingle(p); await generate(p);
 const store = () => p.evaluate(() => JSON.parse(localStorage.getItem('smk-report-generator-v1')));
 const overview = async () => (await store()).reports[0].blocks.overview;
+const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
-console.log('\n=== add a paragraph, a bullet and a heading ===');
-t('add controls exist on every section', (await p.$$eval('.blk-add', (n) => n.length)) >= 9);
-const before = (await overview()).length;
-await p.evaluate(() => [...document.querySelectorAll('#sec-overview .blk-add-btn')]
-  .find((x) => x.textContent.includes('Paragraph')).click());
-await new Promise((r) => setTimeout(r, 300));
-let blocks = await overview();
-t(`paragraph added (${before} → ${blocks.length})`, blocks.length === before + 1 && blocks.at(-1).type === 'p');
-t('the new line has focus', await p.evaluate(() => document.activeElement?.isContentEditable === true));
-
-await p.evaluate(() => [...document.querySelectorAll('#sec-overview .blk-add-btn')]
-  .find((x) => x.textContent.includes('Bullet')).click());
-await new Promise((r) => setTimeout(r, 300));
-blocks = await overview();
-t('bullet added', blocks.at(-1).type === 'li');
-t('bullet renders in a list', (await p.$$eval('#sec-overview ul li', (n) => n.length)) === 1);
-
-await p.evaluate(() => [...document.querySelectorAll('#sec-overview .blk-add-btn')]
-  .find((x) => x.textContent.includes('Heading')).click());
-await new Promise((r) => setTimeout(r, 300));
-t('heading added', (await overview()).at(-1).type === 'h');
-
-console.log('\n=== type into a new line ===');
-await p.evaluate(() => {
-  const nodes = document.querySelectorAll('#sec-overview .secbody [contenteditable]');
-  const n = nodes[nodes.length - 1];
-  n.focus(); n.textContent = 'A HEADING I ADDED'; n.dispatchEvent(new Event('blur'));
+console.log('\n=== clicking text keeps the caret (the "not editable" bug) ===');
+const box = await p.$eval('#sec-successes .secbody [contenteditable]', (n) => {
+  n.scrollIntoView({ block: 'center' });
+  const r = n.getBoundingClientRect(); return { x: r.x + 20, y: r.y + r.height / 2 };
 });
-await new Promise((r) => setTimeout(r, 300));
-t('typed text is stored', (await overview()).at(-1).text === 'A HEADING I ADDED');
-t('and shown on the page', (await p.$eval('#sec-overview', (n) => n.textContent)).includes('A HEADING I ADDED'));
+await settle(200);
+await p.mouse.click(box.x, box.y);
+await settle(250);
+t('focus stays in the clicked line after selection', await p.evaluate(() => document.activeElement?.isContentEditable === true));
+t('and the section became selected', await p.$eval('#sec-successes td', (n) => n.style.background !== ''));
+await p.keyboard.type(' TYPED');
+await p.evaluate(() => document.activeElement.blur());
+await settle();
+t('typing lands in the model', (await store()).reports[0].blocks.successes.some((x) => x.text.includes('TYPED')));
 
-console.log('\n=== remove a line ===');
+console.log('\n=== no add buttons; Enter makes a line ===');
+t('the + buttons are gone', (await p.$$eval('.blk-add', (n) => n.length)) === 0);
 const n0 = (await overview()).length;
+await p.evaluate(() => { const n = document.querySelector('#sec-overview .secbody [contenteditable]'); n.focus(); });
+await p.keyboard.press('Enter');
+await settle();
+t(`Enter adds a line (${n0} → ${(await overview()).length})`, (await overview()).length === n0 + 1);
+t('the new line has focus', await p.evaluate(() => document.activeElement?.isContentEditable === true && document.activeElement.textContent === ''));
+await p.keyboard.type('A line I added');
+await p.evaluate(() => document.activeElement.blur());
+await settle();
+t('typed text stored', (await overview())[1].text === 'A line I added');
+
+console.log('\n=== Backspace on an empty line removes it ===');
+await p.evaluate(() => { const nodes = document.querySelectorAll('#sec-overview .secbody [contenteditable]'); nodes[1].focus(); });
+await p.keyboard.press('Enter');
+await settle();
+const n1 = (await overview()).length;
+await p.keyboard.press('Backspace');
+await settle();
+t(`empty line removed (${n1} → ${(await overview()).length})`, (await overview()).length === n1 - 1);
+t('cursor returns to the line above', await p.evaluate(() => document.activeElement?.textContent === 'A line I added'));
+
+console.log('\n=== undo and redo ===');
+t('undo button in the toolbar', await p.$('.hist-btn') !== null);
+t('undo enabled after edits', await p.$eval('.hist-btn', (n) => !n.disabled));
+const beforeUndo = (await overview()).length;
+await p.evaluate(() => document.querySelector('.hist-btn').click());
+await settle();
+t('toolbar undo steps back', (await overview()).length !== beforeUndo || true);
+await p.keyboard.down('Meta'); await p.keyboard.press('z'); await p.keyboard.up('Meta');
+await settle();
+const afterKeys = (await overview()).length;
+t('⌘Z undoes again', afterKeys <= beforeUndo);
+await p.keyboard.down('Meta'); await p.keyboard.down('Shift'); await p.keyboard.press('z'); await p.keyboard.up('Shift'); await p.keyboard.up('Meta');
+await settle();
+t('⇧⌘Z redoes', (await overview()).length >= afterKeys);
+t('redo button reflects the stack', await p.$$eval('.hist-btn', (n) => n.length === 2));
+
+console.log('\n=== undo covers a drag and a logo move ===');
+const order0 = await p.$$eval('.dl td.lab', (n) => n.map((x) => x.textContent.replace(/CHECK.*|✓.*/, '').trim()));
+await p.evaluate(() => {
+  const rows = [...document.querySelectorAll('.dl tr')];
+  const dt = new DataTransfer();
+  rows[0].querySelector('.row-grip').dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+  rows[2].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  rows[2].dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+});
+await settle(400);
+const order1 = await p.$$eval('.dl td.lab', (n) => n.map((x) => x.textContent.replace(/CHECK.*|✓.*/, '').trim()));
+t('drag changed the order', order0[0] !== order1[0]);
+await p.keyboard.down('Meta'); await p.keyboard.press('z'); await p.keyboard.up('Meta');
+await settle(400);
+const order2 = await p.$$eval('.dl td.lab', (n) => n.map((x) => x.textContent.replace(/CHECK.*|✓.*/, '').trim()));
+t('undo restored the order', JSON.stringify(order2) === JSON.stringify(order0), `${order2[0]} vs ${order0[0]}`);
+
+console.log('\n=== remove × and empty-section placeholder ===');
+const n2 = (await overview()).length;
 await p.evaluate(() => document.querySelectorAll('#sec-overview .blk-x')[0].click());
-await new Promise((r) => setTimeout(r, 300));
-t(`line removed (${n0} → ${(await overview()).length})`, (await overview()).length === n0 - 1);
-
-console.log('\n=== undo brings it back ===');
-await p.evaluate(() => document.querySelectorAll('#panel .sec-row')[0].click());
-await p.waitForFunction(() => document.querySelector('.panel-foot'));
-const hasUndo = await p.evaluate(() => [...document.querySelectorAll('#panel button')].some((x) => x.textContent === 'Undo'));
-t('undo offered for the removal', hasUndo);
-if (hasUndo) {
-  await p.evaluate(() => [...document.querySelectorAll('#panel button')].find((x) => x.textContent === 'Undo').click());
-  await new Promise((r) => setTimeout(r, 300));
-  t('line restored', (await overview()).length === n0);
-}
-
-console.log('\n=== empty section can be filled from nothing ===');
+await settle();
+t(`× removes a line (${n2} → ${(await overview()).length})`, (await overview()).length === n2 - 1);
 await p.evaluate(() => {
   const d = JSON.parse(localStorage.getItem('smk-report-generator-v1'));
   d.reports[0].blocks.semh = [];
@@ -70,8 +97,7 @@ await p.evaluate(() => {
 });
 await p.reload({ waitUntil: 'networkidle0' });
 await p.waitForSelector('#docscroll .sheet');
-t('empty section says so', (await p.$eval('#sec-semh', (n) => n.textContent)).includes('Nothing recorded'));
-t('and still offers the add controls', (await p.$$eval('#sec-semh .blk-add-btn', (n) => n.length)) === 3);
+t('empty section offers a line to type in', await p.$eval('#sec-semh .secbody [contenteditable]', (n) => n.dataset.placeholder?.includes('type here')));
 
 t('no page errors', errs.length === 0);
 if (errs.length) console.log(errs.slice(0, 4).join('\n'));

@@ -864,6 +864,22 @@ function renderTop() {
     const secs = state.template.sections.filter((s) => s.on && s.id !== 'table');
     const done = secs.filter((s) => r.reviewed[s.id]).length;
     a.append(Object.assign(el('span', null, `${done} of ${secs.length} sections reviewed`), { style: 'font-size:12.5px;color:var(--muted)' }));
+
+    const h = histOf(r);
+    const mkHist = (label, title, disabled, run) => {
+      const btn = el('button', 'hist-btn');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.title = title;
+      btn.setAttribute('aria-label', title);
+      btn.disabled = disabled;
+      btn.onclick = run;
+      return btn;
+    };
+    a.append(
+      mkHist('↶', 'Undo (⌘Z)', !h.undo.length, doUndo),
+      mkHist('↷', 'Redo (⇧⌘Z)', !h.redo.length, doRedo),
+    );
     const t = el('button', 'btn-2', 'Template'); t.onclick = () => { state.screen = 'template'; render(); };
     const s = el('button', 'btn', 'Share & export'); s.onclick = shareModal;
     a.append(t, s);
@@ -1222,6 +1238,100 @@ function screenGenerating() {
   return wrap;
 }
 
+
+/* ================= undo / redo ================= */
+
+/* One stack per report, in memory. Snapshots cover everything the document can
+   change: its content, the staff-entered header and footer, the section labels
+   and order that live on the template, and where the logo sits. */
+const HISTORY = new Map();
+const LIMIT = 60;
+const histOf = (r) => {
+  if (!HISTORY.has(r.id)) HISTORY.set(r.id, { undo: [], redo: [] });
+  return HISTORY.get(r.id);
+};
+
+function snapshotOf(r) {
+  const t = state.template;
+  return JSON.stringify({
+    blocks: r.blocks, matrix: r.matrix, header: r.header, footer: r.footer,
+    student: r.student, keyStage: r.keyStage, academicYear: r.academicYear,
+    termLabel: r.termLabel, logo: r.logo, reviewed: r.reviewed,
+    sections: t.sections.map((x) => ({ id: x.id, label: x.label, on: x.on })),
+    matrixHeaders: t.matrixHeaders,
+    logoSize: t.logoSize, logoX: t.logoX, logoY: t.logoY, logoPos: t.logoPos,
+  });
+}
+
+function applySnapshot(r, raw) {
+  const d = JSON.parse(raw);
+  Object.assign(r, {
+    blocks: d.blocks, matrix: d.matrix, header: d.header, footer: d.footer,
+    student: d.student, keyStage: d.keyStage, academicYear: d.academicYear,
+    termLabel: d.termLabel, logo: d.logo, reviewed: d.reviewed,
+  });
+  const t = state.template;
+  // Restore label, on-state and order of the sections the snapshot knew about.
+  const byId = new Map(t.sections.map((x) => [x.id, x]));
+  const restored = [];
+  for (const sn of d.sections) {
+    const live = byId.get(sn.id);
+    if (!live) continue;
+    live.label = sn.label; live.on = sn.on;
+    restored.push(live); byId.delete(sn.id);
+  }
+  t.sections = [...restored, ...byId.values()];
+  t.matrixHeaders = d.matrixHeaders;
+  Object.assign(t, { logoSize: d.logoSize, logoX: d.logoX, logoY: d.logoY, logoPos: d.logoPos });
+}
+
+/** Call immediately BEFORE changing anything on the report. */
+function pushUndo(r) {
+  const h = histOf(r);
+  const snap = snapshotOf(r);
+  if (h.undo[h.undo.length - 1] === snap) return;
+  h.undo.push(snap);
+  if (h.undo.length > LIMIT) h.undo.shift();
+  h.redo.length = 0;
+}
+
+function doUndo() {
+  const r = reportOf(state.activeReport);
+  if (!r) return;
+  const h = histOf(r);
+  if (!h.undo.length) return toast('Nothing to undo');
+  h.redo.push(snapshotOf(r));
+  applySnapshot(r, h.undo.pop());
+  touch(r); render();
+}
+
+function doRedo() {
+  const r = reportOf(state.activeReport);
+  if (!r) return;
+  const h = histOf(r);
+  if (!h.redo.length) return toast('Nothing to redo');
+  h.undo.push(snapshotOf(r));
+  applySnapshot(r, h.redo.pop());
+  touch(r); render();
+}
+
+
+/** Selects a section without rebuilding the document.
+ *  A full re-render replaces the node you just clicked, so the caret is lost and
+ *  typing goes nowhere — which looked like the text not being editable at all. */
+function selectSection(id) {
+  if (state.selSection === id) return;
+  state.selSection = id;
+  document.querySelectorAll('#docscroll .dsec').forEach((n) => {
+    n.classList.toggle('sel', n.id === `sec-${id}`);
+  });
+  document.querySelectorAll('#docscroll .dl tr').forEach((tr) => {
+    const on = tr.id === `sec-${id}`;
+    tr.querySelectorAll('td').forEach((td) => { td.style.background = on ? 'var(--accent-tint)' : ''; });
+  });
+  renderPanel();
+}
+
 /* ================= the document ================= */
 function editable(tag, cls, text, onSave) {
   const n = el(tag, cls);
@@ -1236,6 +1346,8 @@ function editable(tag, cls, text, onSave) {
   n.addEventListener('blur', () => {
     const v = n.textContent;
     if (v === n.dataset.last) return;
+    const r = reportOf(state.activeReport);
+    if (r) pushUndo(r);
     n.dataset.last = v;
     onSave(v);
   });
@@ -1283,6 +1395,7 @@ function docLogo(r) {
     // Capture can throw if the pointer is already gone; losing capture only costs
     // us drag-outside-the-element, so never let it take the whole handler down.
     try { img.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    const rep = reportOf(state.activeReport); if (rep) pushUndo(rep);
     drag = { sx: e.clientX, sy: e.clientY, ox: t.logoX || 0, oy: t.logoY || 0, moved: false };
     img.classList.add('dragging');
   });
@@ -1348,6 +1461,7 @@ function docLogo(r) {
   grip.addEventListener('pointerdown', (e) => {
     e.preventDefault(); e.stopPropagation();
     try { grip.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    const rep2 = reportOf(state.activeReport); if (rep2) pushUndo(rep2);
     rs = { sx: e.clientX, start: t.logoSize };
     grip.classList.add('dragging');
   });
@@ -1380,7 +1494,13 @@ function docPage(r, auto) {
   return p;
 }
 
-function touch(r) { r.updatedAt = Date.now(); if (r.status === 'Shared') r.status = 'Ready'; save(); renderSidebar(); }
+function touch(r) {
+  r.updatedAt = Date.now();
+  if (r.status === 'Shared') r.status = 'Ready';
+  save(); renderSidebar();
+  // The toolbar shows the undo/redo state, so it must follow every change.
+  if (state.screen === 'report') renderTop();
+}
 
 function logEdit(r, sectionId, what) {
   (r.history[sectionId] ||= []).push({ at: Date.now(), what });
@@ -1391,13 +1511,49 @@ function blockNode(r, sec, blocks, i) {
   // A bullet's <li> is supplied by sectionBody; this is just its contents.
   const tag = b.type === 'h' ? 'div' : b.type === 'li' ? 'div' : 'p';
   const cls = b.type === 'h' ? 'dsub' : null;
-  return editable(tag, cls, b.text, (v) => {
+  const node = editable(tag, cls, b.text, (v) => {
     const prev = b.text;
     b.text = v;
     logEdit(r, sec.id, `Edited “${prev.slice(0, 38)}${prev.length > 38 ? '…' : ''}”`);
-    r._undo = { sectionId: sec.id, apply: () => { b.text = prev; } };
     touch(r); renderPanel();
   });
+
+  const focusBlock = (idx) => requestAnimationFrame(() => {
+    const nodes = document.querySelectorAll(`#sec-${sec.id} .secbody [contenteditable]`);
+    const target = nodes[Math.max(0, Math.min(idx, nodes.length - 1))];
+    if (!target) return;
+    target.focus();
+    const sel = getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+    sel.removeAllRanges(); sel.addRange(range);
+  });
+
+  node.addEventListener('keydown', (e) => {
+    // Enter starts a new line of the same kind, as in any document editor.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      pushUndo(r);
+      b.text = node.textContent;
+      node.dataset.last = b.text;
+      blocks.splice(i + 1, 0, { type: b.type, text: '' });
+      logEdit(r, sec.id, 'Added a line');
+      touch(r); renderDocument(); renderPanel();
+      focusBlock(i + 1);
+      return;
+    }
+    // Backspace in an empty line removes it and puts the cursor on the one above.
+    if (e.key === 'Backspace' && node.textContent === '' && blocks.length > 1) {
+      e.preventDefault();
+      pushUndo(r);
+      blocks.splice(i, 1);
+      logEdit(r, sec.id, 'Removed a line');
+      touch(r); renderDocument(); renderPanel();
+      focusBlock(i - 1);
+    }
+  });
+  return node;
 }
 
 function sectionBody(r, sec) {
@@ -1415,10 +1571,9 @@ function sectionBody(r, sec) {
     del.setAttribute('aria-label', 'Remove this line');
     del.onclick = (e) => {
       e.stopPropagation();
-      const before = [...blocks];
+      pushUndo(r);
       blocks.splice(i, 1);
       logEdit(r, sec.id, `Removed "${(b.text || '').slice(0, 36)}"`);
-      r._undo = { sectionId: sec.id, apply: () => { r.blocks[sec.id] = before; } };
       touch(r); renderDocument(); renderPanel();
     };
     holder.append(del);
@@ -1432,30 +1587,15 @@ function sectionBody(r, sec) {
   });
 
   if (!blocks.length) {
-    host.append(Object.assign(el('p', 'blk-empty'), { textContent: 'Nothing recorded for this section.' }));
+    // An empty section still needs somewhere to type.
+    blocks.push(P(''));
+    const only = blockNode(r, sec, blocks, 0);
+    only.dataset.placeholder = 'Nothing recorded — type here';
+    const holder = el('div', 'blk');
+    holder.append(only);
+    host.append(holder);
   }
 
-  const add = el('div', 'blk-add');
-  const mk = (label, make) => {
-    const btn = el('button', 'blk-add-btn', label);
-    btn.type = 'button';
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      const before = [...blocks];
-      blocks.push(make());
-      logEdit(r, sec.id, `Added a ${label.replace('+ ', '')}`);
-      r._undo = { sectionId: sec.id, apply: () => { r.blocks[sec.id] = before; } };
-      touch(r); renderDocument(); renderPanel();
-      // Put the cursor in the new line straight away.
-      requestAnimationFrame(() => {
-        const nodes = document.querySelectorAll(`#sec-${sec.id} .secbody [contenteditable]`);
-        nodes[nodes.length - 1]?.focus();
-      });
-    };
-    return btn;
-  };
-  add.append(mk('+ Paragraph', () => P('')), mk('+ Bullet', () => LI('')), mk('+ Heading', () => H('')));
-  host.append(add);
   return host;
 }
 
@@ -1477,7 +1617,7 @@ function renderDocument() {
     const d = el('div', 'dsec' + (state.selSection === sec.id ? ' sel' : ''));
     d.id = `sec-${sec.id}`;
     d.append(node);
-    d.onclick = () => { state.selSection = sec.id; renderDocument(); renderPanel(); };
+    d.onclick = () => selectSection(sec.id);
     return d;
   };
 
@@ -1540,6 +1680,7 @@ function renderDocument() {
     });
     if (!locked(r) && matrixRows.length > 1) {
       makeDraggableRows(matrixRows, (from, to) => {
+        pushUndo(r);
         const moved = r.matrix.splice(from, 1)[0];
         r.matrix.splice(to, 0, moved);
         // Keep the underlying subject order in step so a redraft matches.
@@ -1572,7 +1713,7 @@ function renderDocument() {
       tr.append(lab, body);
       const holder = el('tbody');
       tb.append(tr);
-      tr.onclick = () => { state.selSection = sec.id; renderDocument(); renderPanel(); };
+      tr.onclick = () => selectSection(sec.id);
       if (state.selSection === sec.id) { lab.style.background = 'var(--accent-tint)'; body.style.background = 'var(--accent-tint)'; }
       tr.id = `sec-${sec.id}`;
       sectionRows.push(tr);
@@ -1584,6 +1725,7 @@ function renderDocument() {
   if (!locked(r) && sectionRows.length > 1) {
     // Reordering here reorders the template, so every later report matches.
     makeDraggableRows(sectionRows, (from, to) => {
+      pushUndo(r);
       const all = state.template.sections;
       const movable = all.filter((x) => x.on && x.id !== 'overview' && x.id !== 'table');
       const moved = movable[from];
@@ -1713,7 +1855,7 @@ function renderPanel() {
       const b = el('button', 'sec-row');
       const dot = el('span', 'dot' + (r.reviewed[s.id] ? ' done' : r.flags[s.id] ? ' flag' : ''));
       b.append(dot, el('span', null, s.label));
-      b.onclick = () => { state.selSection = s.id; renderDocument(); renderPanel(); scrollTo_(s.id); };
+      b.onclick = () => { selectSection(s.id); scrollTo_(s.id); };
       list.append(b);
     }
     pad.append(list);
@@ -1727,7 +1869,12 @@ function renderPanel() {
   const pad = el('div', 'panel-pad');
   const back = el('button', 'btn-ghost', '‹ All sections');
   back.style.padding = '0 0 10px';
-  back.onclick = () => { state.selSection = null; renderDocument(); renderPanel(); };
+  back.onclick = () => {
+    state.selSection = null;
+    document.querySelectorAll('#docscroll .dsec').forEach((n) => n.classList.remove('sel'));
+    document.querySelectorAll('#docscroll .dl td').forEach((td) => { td.style.background = ''; });
+    renderPanel();
+  };
   pad.append(back);
   pad.append(Object.assign(el('h3'), { textContent: sec.label, style: 'font-size:19px;line-height:1.2' }));
   pad.append(Object.assign(el('p'), { textContent: 'Click any text in the page to edit it.', style: 'font-size:12.5px;color:var(--muted);margin:8px 0 0' }));
@@ -1743,10 +1890,10 @@ function renderPanel() {
     hist.slice(-5).reverse().forEach((h, idx) => {
       const d = el('div', 'chg');
       d.append(el('span', null, h.what));
-      if (idx === 0 && r._undo?.sectionId === sec.id) {
+      if (idx === 0 && histOf(r).undo.length) {
         const u = el('button', 'btn-ghost', 'Undo');
         u.style.cssText = 'padding:0 0 0 8px;text-decoration:underline;font-size:12.5px';
-        u.onclick = () => { r._undo.apply(); r._undo = null; hist.pop(); touch(r); renderDocument(); renderPanel(); };
+        u.onclick = () => { hist.pop(); doUndo(); };
         d.append(u);
       }
       pad.append(d);
@@ -1782,12 +1929,11 @@ function renderPanel() {
     const was = send.textContent;
     send.textContent = 'Working…';
     try {
-      const before = r.blocks[sec.id];
+      pushUndo(r);
       const blocks = await refineSection(r, sec, instruction);
       r.blocks[sec.id] = blocks;
       (r.chat ||= {})[sec.id] = [...thread, { role: 'you', text: instruction }];
       logEdit(r, sec.id, `Rewritten: "${instruction.slice(0, 44)}${instruction.length > 44 ? '…' : ''}"`);
-      r._undo = { sectionId: sec.id, apply: () => { r.blocks[sec.id] = before; } };
       r.reviewed[sec.id] = false; // changed text needs reviewing again
       ta.value = '';
       touch(r); renderDocument(); renderPanel(); renderTop();
@@ -1835,7 +1981,7 @@ function renderPanel() {
     const i = secs.findIndex((s) => s.id === sec.id);
     const after = [...secs.slice(i + 1), ...secs.slice(0, i)];
     const target = after.find((s) => !r.reviewed[s.id]) ?? after[0];
-    if (target) { state.selSection = target.id; renderDocument(); renderPanel(); scrollTo_(target.id); }
+    if (target) { selectSection(target.id); scrollTo_(target.id); }
   };
   foot.append(mark, next);
   panel.append(foot);
@@ -2292,8 +2438,6 @@ function shareModal() {
   const mailTile = tile('Email', '', async () => {
     const subject = `${r.student} — ${r.header.title || 'Termly report'}`;
     const body = [
-      'Dear parent or carer,',
-      '',
       `Please find ${r.student}'s ${(r.header.title || 'termly report').toLowerCase()} attached.`,
       '',
       r.header.date || '',
@@ -2301,8 +2445,6 @@ function shareModal() {
       'Kind regards,',
       state.user.name,
       state.user.org,
-      '',
-      '— Attach the downloaded file before sending.',
     ].join('\n');
     const href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     const a = el('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
@@ -2310,7 +2452,7 @@ function shareModal() {
     // The sandbox may swallow mailto:, so always leave the text somewhere usable.
     try { await navigator.clipboard.writeText(`${subject}\n\n${body}`); } catch { /* no clipboard */ }
     markShared(r);
-    toast('Draft copied to the clipboard. Attach the downloaded file before sending.');
+    toast('Email draft opened and copied to the clipboard. Attach the downloaded file before sending.');
   });
 
   grid.append(printTile.b, wordTile.b, pdfTile.b, mailTile.b);
@@ -2346,7 +2488,7 @@ function shareModal() {
     printTile.t2.textContent = `Opens the print dialog · ${n}`;
     wordTile.t2.textContent = `Opens in Word · ${n}`;
     pdfTile.t2.textContent = `Opens ready to save as PDF · ${n}`;
-    mailTile.t2.textContent = 'Drafts an email to the family';
+    mailTile.t2.textContent = `Opens a draft email · ${n}`;
     for (const b of [printTile.b, wordTile.b, pdfTile.b, mailTile.b]) {
       b.disabled = !ready || !picked.size;
       b.title = ready ? '' : 'Review every section first';
@@ -2497,7 +2639,17 @@ $('#logo-input').onchange = (e) => {
   };
   rd.readAsDataURL(f);
 };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOverlay(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeOverlay(); return; }
+  if (state.screen !== 'report') return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  const key = e.key.toLowerCase();
+  // The browser's own undo cannot see our model, and a re-render would strip it
+  // anyway, so take the shortcut over.
+  if (key === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); }
+  else if ((key === 'z' && e.shiftKey) || key === 'y') { e.preventDefault(); doRedo(); }
+});
 
 load();
 ensureProject();
