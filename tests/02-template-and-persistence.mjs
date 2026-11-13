@@ -1,5 +1,6 @@
 /* find the 404 and test template editing + persistence. */
 import puppeteer from 'puppeteer';
+import { loadSampleSingle } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const p = await b.newPage();
 await p.setViewport({ width: 1440, height: 900 });
@@ -15,8 +16,7 @@ console.log(bad.length ? bad.join('\n') : '(none)');
 const t = (l, v) => console.log(`${v ? '✓' : '✗'} ${l}`);
 
 // generate a report first
-await p.evaluate(() => document.querySelector('.linkish').click());
-await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
+await loadSampleSingle(p);
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 const basePages = await p.$$eval('#docscroll .sheet', (n) => n.length);

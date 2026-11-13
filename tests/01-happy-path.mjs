@@ -1,5 +1,6 @@
 /* the happy path — sample data → generate → review → export gate. */
 import puppeteer from 'puppeteer';
+import { loadSampleSingle } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const p = await b.newPage();
 await p.setViewport({ width: 1440, height: 900 });
@@ -18,9 +19,9 @@ t('default project created', (await p.$$eval('#projects .side-item', (n) => n.le
 await p.evaluate(() => document.querySelector('.linkish').click());
 await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'), { timeout: 15000 });
 t('sample file row shows Read', true);
-const detect = await p.$eval('.detect', (n) => n.textContent);
-t('detection line correct: ' + detect.trim(), detect.includes('3 subject') && detect.includes('18 weekly'));
-t('student prefilled', (await p.$$eval('.card input', (n) => n.map((x) => x.value)))[0] === 'Alex Sample');
+const meta = await p.$eval('.stu-meta', (n) => n.textContent);
+t('student summary: ' + meta.trim(), meta.includes('3 subjects') && meta.includes('18 responses'));
+t('student prefilled', (await p.$eval('.stu-name', (n) => n.value)) === 'Alex Sample');
 
 const genDisabled = await p.$eval('.sticky-foot .btn', (n) => n.disabled);
 t('Generate enabled once read', !genDisabled);

@@ -1,5 +1,6 @@
 /* pin, rename, move, mark read/unread, archive. */
 import puppeteer from 'puppeteer';
+import { loadSampleSingle } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, x='') => console.log(`${v ? '✓' : '✗'} ${l}${x ? ' — ' + x : ''}`);
 const p = await b.newPage();
@@ -22,8 +23,7 @@ const pick = async (label) => {
 };
 
 // make two reports in two projects
-await p.evaluate(() => document.querySelector('.linkish').click());
-await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
+await loadSampleSingle(p);
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 await new Promise((r) => setTimeout(r, 900));
@@ -105,9 +105,9 @@ t('project menu has Pin/Rename/Archive/Delete', ['Pin','Rename','Archive','Delet
 await p.evaluate(() => document.body.click());
 
 console.log('\n=== active project darkened ===');
-await p.evaluate(() => document.querySelector('#projects > .side-item').click());
-await new Promise((r) => setTimeout(r, 300));
-const bg = await p.$eval('#projects .side-item.on', (n) => getComputedStyle(n).backgroundColor);
+await openMenu('#projects > .side-item .dots');
+await pick('Open project');
+const bg = await p.$eval('#projects > .side-item.on', (n) => getComputedStyle(n).backgroundColor);
 const hover = await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--active').trim());
 t(`active row background ${bg}`, bg === 'rgb(219, 214, 203)', `token --active: ${hover}`);
 

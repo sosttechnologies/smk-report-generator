@@ -1,5 +1,6 @@
 /* hostile conditions. */
 import puppeteer from 'puppeteer';
+import { loadSampleSingle } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, x='') => console.log(`${v ? '✓' : '✗'} ${l}${x ? ' — ' + x : ''}`);
 const page = async () => {
@@ -12,8 +13,7 @@ const page = async () => {
   return p;
 };
 const sample = async (p) => {
-  await p.evaluate(() => document.querySelector('.linkish').click());
-  await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
+  await loadSampleSingle(p);
   await p.click('.sticky-foot .btn');
   await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 };
@@ -40,8 +40,7 @@ await p.close();
 
 console.log('\n=== double-click Generate / rapid clicks ===');
 p = await page();
-await p.evaluate(() => document.querySelector('.linkish').click());
-await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
+await loadSampleSingle(p);
 await p.evaluate(() => { const b = document.querySelector('.sticky-foot .btn'); b.click(); b.click(); b.click(); });
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 await new Promise((r) => setTimeout(r, 900));

@@ -1,5 +1,6 @@
 /* Expandable projects in the sidebar. */
 import puppeteer from 'puppeteer';
+import { loadSampleSingle } from './helpers.mjs';
 const b = await puppeteer.launch({ headless: true });
 const t = (l, v, x='') => console.log(`${v ? '✓' : '✗'} ${l}${x ? ' — ' + x : ''}`);
 const p = await b.newPage();
@@ -10,8 +11,7 @@ await p.evaluate(() => localStorage.clear());
 await p.reload({ waitUntil: 'networkidle0' });
 const store = () => p.evaluate(() => JSON.parse(localStorage.getItem('smk-report-generator-v1')));
 
-await p.evaluate(() => document.querySelector('.linkish').click());
-await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'));
+await loadSampleSingle(p);
 await p.click('.sticky-foot .btn');
 await p.waitForFunction(() => document.querySelector('#docscroll .sheet'), { timeout: 30000 });
 await new Promise((r) => setTimeout(r, 900));
@@ -19,7 +19,7 @@ await new Promise((r) => setTimeout(r, 900));
 t('chevron rendered on the project row', await p.$('#projects .chev-btn') !== null);
 t('generating auto-expands its project', (await p.$$eval('#projects .nest .side-item', (n) => n.length)) === 1);
 t('nested row shows the student', (await p.$eval('#projects .nest .l1', (n) => n.textContent)).includes('Alex Sample'));
-t('nested row shows status, not project name', (await p.$eval('#projects .nest .l2', (n) => n.textContent)) === 'Draft');
+t('nested row is just the name, no status line', (await p.$$eval('#projects .nest .l2', (n) => n.length)) === 0);
 
 console.log('\n=== collapse and expand ===');
 await p.evaluate(() => document.querySelector('#projects .chev-btn').click());
@@ -30,7 +30,7 @@ await p.evaluate(() => document.querySelector('#projects .chev-btn').click());
 await new Promise((r) => setTimeout(r, 250));
 t('expanded again', (await p.$$eval('#projects .nest .side-item', (n) => n.length)) === 1);
 t('chevron rotates when open', await p.$eval('#projects .chev-btn', (n) => n.classList.contains('open')));
-t('aria-expanded set', await p.$eval('#projects .chev-btn', (n) => n.getAttribute('aria-expanded')) === 'true');
+t('aria-expanded on the row', await p.$eval('#projects > .side-item', (n) => n.getAttribute('aria-expanded')) === 'true');
 
 console.log('\n=== chevron must not open the project page ===');
 await p.evaluate(() => document.querySelector('#projects .chev-btn').click());
@@ -39,9 +39,21 @@ t('still on the report screen', (await p.$('#docscroll')) !== null);
 await p.evaluate(() => document.querySelector('#projects .chev-btn').click());
 await new Promise((r) => setTimeout(r, 250));
 
-console.log('\n=== clicking the row still opens the project ===');
+console.log('\n=== clicking the row toggles the folder ===');
+const openBefore = await p.$$eval('#projects .nest', (n) => n.length);
 await p.evaluate(() => document.querySelector('#projects > .side-item').click());
-await new Promise((r) => setTimeout(r, 300));
+await new Promise((r) => setTimeout(r, 250));
+const openAfter = await p.$$eval('#projects .nest', (n) => n.length);
+t('row click collapses', openBefore === 1 && openAfter === 0);
+await p.evaluate(() => document.querySelector('#projects > .side-item').click());
+await new Promise((r) => setTimeout(r, 250));
+t('row click expands again', (await p.$$eval('#projects .nest', (n) => n.length)) === 1);
+
+console.log('\n=== Open project reaches the project page ===');
+await p.evaluate(() => document.querySelector('#projects > .side-item .dots').click());
+await p.waitForSelector('.menu');
+await p.evaluate(() => [...document.querySelectorAll('.menu button')].find((x) => x.textContent.startsWith('Open project')).click());
+await new Promise((r) => setTimeout(r, 350));
 t('project page opened', (await p.$eval('#screen', (n) => n.textContent)).includes('1 report'));
 
 console.log('\n=== nested row opens the report ===');
@@ -68,7 +80,7 @@ console.log('\n=== menu gained Expand/Collapse and New report here ===');
 await p.evaluate(() => document.querySelector('#projects > .side-item .dots').click());
 await p.waitForSelector('.menu');
 const items = await p.$$eval('.menu button span:first-child', (n) => n.map((x) => x.textContent));
-t('project menu', ['Collapse','Pin','Rename','New report here','Archive','Delete'].every((e) => items.some((i) => i.startsWith(e))), items.join(' / '));
+t('project menu', ['Open project','Collapse','Pin','Rename','New report here','Archive','Delete'].every((e) => items.some((i) => i.startsWith(e))), items.join(' / '));
 await p.evaluate(() => document.body.click());
 
 t('no page errors', errs.length === 0);

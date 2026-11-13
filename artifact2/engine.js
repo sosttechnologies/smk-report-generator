@@ -592,6 +592,45 @@ export function findResidualRisks(term) {
  * mistaken for a real child, or coincide with one.
  */
 export function sampleSubmissions() {
+  return [...sampleStudent('Alex Sample'), ...sampleExtra()];
+}
+
+/** Two more synthetic students, so the multi-student path is easy to try. */
+function sampleExtra() {
+  const W = ['2026-05-04', '2026-05-11', '2026-05-18', '2026-05-25'];
+  const mk = (student, subject, tutor, rows) => rows.map((w, i) => ({
+    id: `${student.toLowerCase().replace(/[^a-z0-9]+/g, '-')}|${subject}|${W[i]}`,
+    studentName: student, instructorName: tutor, subject, weekBeginning: W[i],
+    weeklyAttendance: w.att,
+    engagement: { Attendance: w.e[0], Punctuality: w.e[1], 'Preparation for Class': w.e[2], 'Homework completion': w.e[3] },
+    academics: { 'Meets Deadlines': w.a[0], 'Quality of work': w.a[1], 'Understands key terms': w.a[2],
+      'Applies knowledge and understanding to new concepts': w.a[3], 'Acts on feedback': w.a[4] },
+    concerns: w.c, keyActions: w.k, generalComments: w.g,
+  }));
+  const E4 = 'Excellent', G = 'Good', A = 'Average', P = 'Poor';
+  return [
+    ...mk('Robin Example', 'English Language', 'Tutor B', [
+      { att:'full', e:[E4,E4,E4,E4], a:[E4,E4,E4,G,E4], c:'Occasionally repetitive sentence structure.', k:'Experiment with varied sentence openings.', g:'Excellent comprehension and confident contribution to group discussion.' },
+      { att:'full', e:[E4,E4,E4,E4], a:[E4,E4,E4,E4,E4], c:'None recorded this week.', k:'Extend into comparative analysis.', g:'Reads widely and brings a strong vocabulary to written work.' },
+      { att:'full', e:[E4,E4,E4,G], a:[E4,E4,E4,G,E4], c:'Handwriting and presentation under time pressure.', k:'Practise timed paragraphs.', g:'Thoughtful and well-structured creative writing.' },
+      { att:'full', e:[E4,E4,E4,E4], a:[E4,E4,E4,E4,E4], c:'None identified.', k:'Begin an independent wider-reading log.', g:'Confident, articulate and supportive of peers in discussion.' },
+    ]),
+    ...mk('Robin Example', 'Maths', 'Tutor A', [
+      { att:'full', e:[E4,E4,G,G], a:[G,G,E4,G,E4], c:'Does not always show working on multi-step problems.', k:'Insist on a written method for every multi-step question.', g:'Quick and accurate with number work and fractions.' },
+      { att:'full', e:[E4,E4,G,G], a:[G,G,E4,G,E4], c:'Working out still skipped when confident.', k:'Model the full method each session.', g:'Secure times tables and strong mental arithmetic.' },
+      { att:'full', e:[E4,E4,E4,G], a:[G,E4,E4,G,E4], c:'Word problems require careful re-reading.', k:'Underline key information before solving.', g:'Growing confidence with ratio and proportion.' },
+      { att:'full', e:[E4,E4,E4,E4], a:[E4,E4,E4,G,E4], c:'None significant.', k:'Introduce extension problems.', g:'Excellent focus and a positive influence in the group.' },
+    ]),
+    ...mk('Sam Placeholder', 'Maths', 'Tutor A', [
+      { att:'partial', e:[A,A,A,P], a:[P,A,A,P,A], c:'Attendance and homework completion are the main barriers to progress.', k:'Contact family to agree an attendance plan.', g:'Works carefully when present; improved accuracy in geometry.' },
+      { att:'full', e:[G,A,G,A], a:[A,G,G,A,G], c:'Homework completion still inconsistent.', k:'Shorter, more frequent homework tasks.', g:'Noticeably more settled this week and willing to ask for help.' },
+      { att:'partial', e:[A,A,A,P], a:[P,A,A,P,A], c:'Missed two sessions; gaps now showing in algebra.', k:'Plan a catch-up session on algebraic manipulation.', g:'Positive attitude when he does attend.' },
+      { att:'full', e:[G,G,G,A], a:[A,G,G,A,G], c:'Needs to build independent revision habits.', k:'Provide a structured revision checklist.', g:'Good progress on geometry. Responding well to one-to-one explanation.' },
+    ]),
+  ];
+}
+
+function sampleStudent(name) {
   const W = ['2026-05-04','2026-05-11','2026-05-18','2026-05-25','2026-06-01','2026-06-08'];
   const E4='Excellent', G='Good', A='Average';
   const mk = (subject, tutor, weeks) => weeks.map((w, i) => ({
@@ -604,7 +643,7 @@ export function sampleSubmissions() {
     concerns: w.c, keyActions: w.k, generalComments: w.g,
   }));
 
-  return [
+  const out = [
     ...mk('Maths', 'Tutor A', [
       { att:'full', e:[E4,G,E4,G], a:[G,G,E4,A,E4], c:'Limited resilience when faced with challenging algebra; gives up quickly on multi-step problems.', k:'Set three short practice questions between sessions to build persistence.', g:'Strong participation and engagement in lessons. Grasps new concepts quickly when introduced visually.' },
       { att:'full', e:[E4,G,E4,A], a:[G,E4,E4,G,E4], c:'Homework completion inconsistent this week.', k:'Agree a fixed homework slot with family.', g:'Secure on surds and index laws. Asked thoughtful questions about geometric proof.' },
@@ -630,4 +669,5 @@ export function sampleSubmissions() {
       { att:'full', e:[E4,G,E4,G], a:[G,E4,E4,G,E4], c:'Presentation and legibility of written work remains a recurring concern. Needs independent revision habits.', k:'Establish short independent revision sessions between lessons.', g:'Strong engagement and understanding when studying Nuclear Physics. Notable progress in Electricity, Mechanics and Nuclear Physics.' },
     ]),
   ];
+  return out.map((r) => ({ ...r, studentName: name }));
 }

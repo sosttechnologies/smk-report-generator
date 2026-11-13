@@ -188,18 +188,18 @@ DOCUMENT:
 `;
 
 async function extractDoc(file, onProgress) {
-  if (!sample) throw new Error('Reading PDF, Word and image files needs Claude, which this view cannot reach. Upload the Forms .xlsx or .csv export instead — that is read without a model.');
+  if (!sample) throw new Error('PDF, Word and image files cannot be read in this view. Upload the Microsoft Forms .xlsx or .csv export instead.');
   const isImg = /\.(png|jpe?g|gif|webp)$/i.test(file.name);
   let result;
   if (isImg) {
     const lim = await sample.limits().catch(() => ({}));
-    if (!lim.images) throw new Error('This view cannot send images to Claude. Try a PDF, Word file or the Forms export.');
-    onProgress?.('Claude is reading the image…');
+    if (!lim.images) throw new Error('Images cannot be read in this view. Try a PDF, Word file or the Forms export.');
+    onProgress?.('Reading the image…');
     result = await sample.json(EXTRACT + '(see attached image)', { images: [file], modelTier: 'complex' });
   } else {
     const text = await documentText(file);
     if (!text.trim()) throw new Error('No readable text. If this is a scanned PDF, upload it as an image instead.');
-    onProgress?.('Claude is reading the document…');
+    onProgress?.('Reading the document…');
     result = await sample.json(EXTRACT + text.slice(0, 120000), { modelTier: 'complex' });
   }
   const rows = Array.isArray(result?.submissions) ? result.submissions : [];
@@ -361,30 +361,20 @@ function coerce(raw, term, fallback) {
   };
 }
 
-const STEPS = (n, s) => ([
-  `Reading ${n} file${n === 1 ? '' : 's'}`,
+const STEPS = (files, sections, students) => ([
+  `Reading ${files} file${files === 1 ? '' : 's'}`,
   'Working out the subject table',
   'Checking comments for private details',
-  `Drafting ${s} sections with your template`,
+  students > 1
+    ? `Drafting ${sections} sections for ${students} students`
+    : `Drafting ${sections} sections with your template`,
   'Matching your example report',
 ]);
 
-async function runGeneration(term, meta) {
-  if (runGeneration.busy) return;
-  runGeneration.busy = true;
-  const tpl = state.template;
-  const enabled = tpl.sections.filter((x) => x.on && x.id !== 'table');
-  state.gen = { steps: STEPS(state.upload?.files?.length ?? 1, enabled.length), at: 0, done: false, title: `Writing ${term.studentName.split(' ')[0]}'s report…` };
-  render();
-
-  const tick = async (i, ms = 420) => { state.gen.at = i; render(); await new Promise((r) => setTimeout(r, ms)); };
-  await tick(0, 300);
-  await tick(1, 380);
-  await tick(2, 320);
-
+/** Builds one report. Returns it without touching global state. */
+async function buildReport(term, row, projectId, tpl) {
   const fallback = E.generateFromTemplate(term);
-  let content = fallback, templated = true, note = '';
-  state.gen.at = 3; render();
+  let content = fallback, templated = true;
 
   if (sample) {
     try {
@@ -392,40 +382,72 @@ async function runGeneration(term, meta) {
       const raw = await sample.json(promptFor(masked, tpl, tpl.sections), { modelTier: 'complex' });
       content = coerce(E.rehydrate(raw, pseudonym), term, fallback);
       templated = false;
-    } catch (e) {
-      note = (e?.code === 'not_granted' ? 'Claude access was declined' : e?.message || 'Claude could not draft this') + ' — written from the offline template instead.';
-    }
-  } else {
-    note = 'Claude is not available in this view — written from the offline template.';
+    } catch { /* fall through to the offline draft */ }
   }
 
-  await tick(4, 320);
-  state.gen.done = true; state.gen.title = 'The draft is ready.'; render();
-  await new Promise((r) => setTimeout(r, 420));
+  const named = row.name.trim() !== term.studentName
+    ? { ...term, studentName: row.name.trim() }
+    : term;
+  const blocks = contentToBlocks(content, named);
 
-  const blocks = contentToBlocks(content, term);
-  const flags = flagSections(blocks, term);
-  const report = {
-    id: uid(), projectId: meta.projectId, student: term.studentName, keyStage: meta.keyStage || '',
+  return {
+    id: uid(), projectId, student: row.name.trim(), keyStage: row.keyStage || '',
     status: 'Draft', updatedAt: Date.now(), createdAt: Date.now(),
     pinned: false, archived: false, unread: false,
-    term, blocks, flags, reviewed: {}, history: {},
-    matrix: E.buildMatrix(term, { tiers: {}, averageGrades: {} }, content),
+    term: named, blocks, flags: flagSections(blocks, named), reviewed: {}, history: {},
+    matrix: E.buildMatrix(named, { tiers: {}, averageGrades: {} }, content),
     header: { ...tpl.header }, footer: { ...tpl.footer }, logo: tpl.logo,
-    provenance: templated
-      ? (note || 'Written offline from the tutors’ own words — no model was used.')
-      : 'Drafted by Claude. Names were replaced with “Student A” before sending and restored here.',
     templated,
   };
-  state.reports.unshift(report);
+}
+
+async function runBatch(jobs, meta) {
+  if (runBatch.busy) return;
+  runBatch.busy = true;
+  const tpl = state.template;
+  const enabled = tpl.sections.filter((x) => x.on && x.id !== 'table');
+
+  state.gen = {
+    steps: STEPS(state.upload?.files?.length ?? 1, enabled.length, jobs.length),
+    at: 0, done: false, total: jobs.length, made: 0,
+    title: jobs.length > 1
+      ? `Writing ${jobs.length} reports…`
+      : `Writing ${jobs[0].row.name.trim().split(/\s+/)[0]}'s report…`,
+  };
+  render();
+
+  const tick = async (i, ms = 400) => { state.gen.at = i; render(); await new Promise((r) => setTimeout(r, ms)); };
+  await tick(0, 280);
+  await tick(1, 340);
+  await tick(2, 300);
+  state.gen.at = 3; render();
+
+  const made = [];
+  for (const job of jobs) {
+    state.gen.current = job.row.name.trim();
+    render();
+    made.push(await buildReport(job.term, job.row, meta.projectId, tpl));
+    state.gen.made = made.length;
+    render();
+  }
+
+  await tick(4, 300);
+  state.gen.done = true;
+  state.gen.title = jobs.length > 1 ? `${jobs.length} drafts are ready.` : 'The draft is ready.';
+  render();
+  await new Promise((r) => setTimeout(r, 450));
+
+  // Newest first in Recents, but open the first student the user listed.
+  for (const r of [...made].reverse()) state.reports.unshift(r);
   state.expandedProjects[meta.projectId] = true;
-  state.activeReport = report.id;
+  state.activeReport = made[0].id;
   state.selSection = null;
   state.gen = null;
   state.upload = null;
   state.screen = 'report';
-  runGeneration.busy = false;
+  runBatch.busy = false;
   save(); render();
+  if (made.length > 1) toast(`${made.length} drafts created. Review each one before exporting.`);
 }
 
 /* ================= toast / confirm / menu ================= */
@@ -502,19 +524,40 @@ function groupRecents(list) {
   return g;
 }
 
+
+/* ---- icons ---- */
+function svg(paths, cls) {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  n.setAttribute('viewBox', '0 0 16 16');
+  n.setAttribute('fill', 'none');
+  n.setAttribute('aria-hidden', 'true');
+  if (cls) n.setAttribute('class', cls);
+  n.innerHTML = paths;
+  return n;
+}
+const ICON = {
+  chevron: () => svg('<path d="M6 3.5L10.5 8L6 12.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'),
+  folder: () => svg('<path d="M1.75 4.25a1 1 0 0 1 1-1h3.1a1 1 0 0 1 .78.37l.74.92a1 1 0 0 0 .78.37h4.1a1 1 0 0 1 1 1v6.47a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1V4.25Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>', 'ic'),
+  folderOpen: () => svg('<path d="M1.75 12.4V4.25a1 1 0 0 1 1-1h3.1a1 1 0 0 1 .78.37l.74.92a1 1 0 0 0 .78.37h4.1a1 1 0 0 1 1 1v1.04" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M1.75 12.4l1.6-5.1a1 1 0 0 1 .96-.7h10.2a.6.6 0 0 1 .57.78l-1.5 4.8a1 1 0 0 1-.96.7H2.75a1 1 0 0 1-1-.48Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>', 'ic'),
+  doc: () => svg('<path d="M4 1.75h4.6L12.25 5.4v8.85a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8.4 1.9V5.5h3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M5.6 8.6h4.2M5.6 11h2.8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>', 'ic'),
+  template: () => svg('<rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M2.25 6.1h11.5M6.1 6.1v7.15" stroke="currentColor" stroke-width="1.2"/>', 'ic'),
+};
+
 /** One report row in the sidebar — used both under a project and in Recents. */
 function reportRow(r, { dimmed = false, nested = false } = {}) {
   const on = state.screen === 'report' && state.activeReport === r.id;
   const b = el('button', 'side-item' + (on ? ' on' : '') + (dimmed ? ' dim-row' : '') + (nested ? ' nested' : ''));
+  if (nested) b.append(ICON.doc());
+  const lines = nested ? el('span', 'lines') : b;
   const l1 = el('span', 'l1');
   if (r.unread) l1.append(el('span', 'unread-dot'));
   if (r.pinned && !nested) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
   l1.append(document.createTextNode(nested ? r.student : `${r.student} — Termly report`));
   if (r.unread) l1.style.fontWeight = '600';
-  b.append(l1);
-  b.append(Object.assign(el('span', 'l2'), {
-    textContent: nested ? r.status : `${projectOf(r.projectId)?.name ?? 'No project'} · ${r.status}`,
-  }));
+  // Just the name, as in the Claude web app. The project is obvious from where the
+  // row sits, and "Draft" repeats what the report screen already says.
+  lines.append(l1);
+  if (nested) b.append(lines);
   b.onclick = () => {
     state.activeReport = r.id; state.selSection = null; state.screen = 'report';
     r.unread = false; save(); render();
@@ -560,34 +603,30 @@ function renderSidebar() {
     const open = !!state.expandedProjects[proj.id];
 
     const b = el('button', 'side-item has-chev' + (on ? ' on' : ''));
-    // The chevron expands in place; the row itself still opens the project page.
+    b.setAttribute('aria-expanded', String(open));
     const chev = el('span', 'chev-btn' + (open ? ' open' : ''));
-    chev.textContent = '▸';
-    chev.setAttribute('role', 'button');
-    chev.setAttribute('tabindex', '0');
-    chev.setAttribute('aria-expanded', String(open));
-    chev.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${proj.name}`);
-    const toggle = (e) => {
-      e.stopPropagation(); e.preventDefault();
-      if (open) delete state.expandedProjects[proj.id];
+    chev.append(ICON.chevron());
+    const toggle = () => {
+      if (state.expandedProjects[proj.id]) delete state.expandedProjects[proj.id];
       else state.expandedProjects[proj.id] = true;
       save(); renderSidebar();
     };
-    chev.onclick = toggle;
-    chev.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); };
 
     const l1 = el('span', 'l1');
     if (proj.pinned) l1.append(Object.assign(el('span', 'pin-ic'), { textContent: '📌' }));
-    l1.append(document.createTextNode(proj.name + ' '));
-    l1.append(Object.assign(el('span'), { textContent: kids.length || '', style: 'color:var(--faint);font-weight:400' }));
-    b.append(chev, l1);
-    b.onclick = () => { state.activeProject = proj.id; state.screen = 'project'; render(); };
+    l1.append(document.createTextNode(proj.name));
+    b.append(chev, open ? ICON.folderOpen() : ICON.folder(), l1);
+    // Clicking the folder opens and closes it, as in the Claude web app.
+    // "Open project" in the ⋯ menu is how you reach the project page.
+    b.onclick = toggle;
+    b.title = open ? `Collapse ${proj.name}` : `Expand ${proj.name}`;
     const d = el('button', 'dots', '⋯');
     d.setAttribute('aria-label', `Options for ${proj.name}`);
     d.onclick = (e) => {
       e.stopPropagation();
       popMenu(d, [
-        { label: open ? 'Collapse' : 'Expand', run: () => toggle(new Event('x')) },
+        { label: 'Open project', run: () => { state.activeProject = proj.id; state.screen = 'project'; render(); } },
+        { label: open ? 'Collapse' : 'Expand', run: toggle },
         { label: proj.pinned ? 'Unpin' : 'Pin', check: !!proj.pinned, run: () => toggleFlag(proj, 'pinned', [`Pinned “${proj.name}”`, `Unpinned “${proj.name}”`]) },
         { label: 'Rename', run: () => renameProject(proj.id, b) },
         { label: 'New report here', run: () => { state.activeProject = proj.id; state.upload = null; state.screen = 'upload'; render(); } },
@@ -834,7 +873,7 @@ function screenUpload() {
   h.append(Object.assign(el('span', 'alt'), { textContent: 'Get back their termly report.' }));
   wrap.append(h);
   wrap.append(Object.assign(el('p', 'lede'), {
-    textContent: 'Weekly tutor forms, Word or PDF progress reports, a Microsoft Forms export — add whatever you have for one student. Everything is read before anything is written.',
+    textContent: 'Weekly tutor forms, Word or PDF progress reports, a Microsoft Forms export. Everything is read before anything is written, and you review every section before it leaves.',
   }));
 
   const drop = el('div'); drop.id = 'drop';
@@ -846,7 +885,7 @@ function screenUpload() {
             stroke-width="1.6" stroke-linecap="round"/>
     </svg>
     <p>Drag files here, or <span class="browse">browse your computer</span></p>
-    <p class="sub">Add everything you have for one student — weekly forms, progress reports, a term's worth at once.</p>
+    <p class="sub">Add everything you have — several students at once is fine. Weekly forms, progress reports, a whole term.</p>
     <div class="fmts">
       <span class="fmt">.xlsx</span><span class="fmt">.csv</span><span class="fmt">.pdf</span>
       <span class="fmt">.docx</span><span class="fmt">.png</span><span class="fmt">.jpg</span>
@@ -898,35 +937,116 @@ function screenUpload() {
       }));
     }
 
-    if (u.term) {
+    if (u.terms?.length) {
       const card = el('div', 'card');
-      const g = el('div', 'grid3');
-      const mk = (label, value, on, opts) => {
-        const l = el('label', 'f'); l.append(el('span', null, label));
-        if (opts) {
-          const sel = el('select');
-          for (const o of opts) { const op = el('option', null, o.label); op.value = o.value; if (o.value === value) op.selected = true; sel.append(op); }
-          sel.onchange = () => on(sel.value); l.append(sel);
-        } else {
-          const i = el('input'); i.value = value ?? ''; i.oninput = () => on(i.value); l.append(i);
-        }
-        return l;
-      };
-      g.append(
-        mk('Student', u.student, (v) => { u.student = v; }),
-        mk('Year / Key Stage', u.keyStage, (v) => { u.keyStage = v; }),
-        mk('Save to project', u.projectId, (v) => { u.projectId = v; }, state.projects.map((p) => ({ value: p.id, label: p.name }))),
-      );
-      card.append(g);
-      const t = u.term;
-      card.append(Object.assign(el('div', 'detect'), {
-        textContent: `Found ${t.subjects.length} subject${t.subjects.length === 1 ? '' : 's'} · ${t.submissions.length} weekly response${t.submissions.length === 1 ? '' : 's'} · weeks beginning ${fmtWeek(t.firstWeek)} – ${fmtWeek(t.lastWeek)}`,
+      const many = u.terms.length > 1;
+      const head = el('div');
+      head.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px';
+      head.append(Object.assign(el('h3'), {
+        textContent: many ? `${u.terms.length} students found` : 'Student',
+        style: 'font-size:15px',
       }));
-      if (u.multiStudent) {
-        card.append(Object.assign(el('div', 'detect'), {
-          innerHTML: `<strong style="color:var(--priv)">${u.multiStudent} students detected.</strong> This makes a report for <strong>${esc(u.student)}</strong> only — upload the others separately.`,
-        }));
+      if (many) {
+        const all = u.rows.every((r) => r.include);
+        const tgl = el('button', 'btn-ghost', all ? 'Deselect all' : 'Select all');
+        tgl.style.cssText = 'padding:0;text-decoration:underline;font-size:12.5px';
+        tgl.onclick = () => { u.rows.forEach((r) => { r.include = !all; }); render(); };
+        head.append(tgl);
       }
+      card.append(head);
+
+      const tbl = el('div', 'stu-list');
+      u.terms.forEach((term, i) => {
+        const row = u.rows[i];
+        const line = el('div', 'stu-row' + (row.include ? '' : ' off'));
+
+        if (many) {
+          const cb = el('input');
+          cb.type = 'checkbox';
+          cb.checked = row.include;
+          cb.setAttribute('aria-label', `Include ${row.name}`);
+          cb.onchange = () => { row.include = cb.checked; render(); };
+          line.append(cb);
+        }
+
+        const name = el('input', 'stu-name');
+        name.value = row.name;
+        name.setAttribute('aria-label', `Name for student ${i + 1}`);
+        name.oninput = () => { row.name = name.value; };
+        line.append(name);
+
+        const ks = el('input', 'stu-ks');
+        ks.value = row.keyStage;
+        ks.placeholder = 'KS 4';
+        ks.setAttribute('aria-label', `Year or key stage for ${row.name}`);
+        ks.oninput = () => { row.keyStage = ks.value; };
+        line.append(ks);
+
+        line.append(Object.assign(el('span', 'stu-meta'), {
+          textContent: `${term.subjects.length} subject${term.subjects.length === 1 ? '' : 's'} · ${term.submissions.length} response${term.submissions.length === 1 ? '' : 's'}`,
+        }));
+        tbl.append(line);
+      });
+      card.append(tbl);
+
+      const projRow = el('label', 'f');
+      projRow.style.marginTop = '14px';
+      projRow.append(el('span', null, 'Save to project'));
+
+      if (u.newProject != null) {
+        // Chose "New project" — type the name here rather than leaving the screen.
+        const wrapNew = el('div');
+        wrapNew.style.cssText = 'display:flex;gap:8px';
+        const nameIn = el('input');
+        nameIn.className = 'stu-name';
+        nameIn.style.flex = '1';
+        nameIn.placeholder = 'Project name';
+        nameIn.value = u.newProject;
+        nameIn.setAttribute('aria-label', 'New project name');
+        nameIn.oninput = () => { u.newProject = nameIn.value; };
+        const commit = () => {
+          const nm = (u.newProject || '').trim();
+          if (!nm) return;
+          const proj = { id: uid(), name: nm };
+          state.projects.push(proj);
+          u.projectId = proj.id;
+          u.newProject = null;
+          save(); render();
+        };
+        nameIn.onkeydown = (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { u.newProject = null; render(); }
+        };
+        const add = el('button', 'btn-2', 'Create');
+        add.type = 'button';
+        add.onclick = commit;
+        const cancel = el('button', 'btn-ghost', 'Cancel');
+        cancel.type = 'button';
+        cancel.onclick = () => { u.newProject = null; render(); };
+        wrapNew.append(nameIn, add, cancel);
+        projRow.append(wrapNew);
+        setTimeout(() => nameIn.focus(), 0);
+      } else {
+        const sel = el('select');
+        for (const proj of state.projects.filter((x) => !x.archived)) {
+          const o = el('option', null, proj.name); o.value = proj.id;
+          if (proj.id === u.projectId) o.selected = true; sel.append(o);
+        }
+        const nw = el('option', null, '+ New project…');
+        nw.value = '__new__';
+        sel.append(nw);
+        sel.onchange = () => {
+          if (sel.value === '__new__') { u.newProject = ''; render(); }
+          else u.projectId = sel.value;
+        };
+        projRow.append(sel);
+      }
+      card.append(projRow);
+
+      const span = u.terms.flatMap((t) => [t.firstWeek, t.lastWeek]).sort();
+      card.append(Object.assign(el('div', 'detect'), {
+        textContent: `Weeks beginning ${fmtWeek(span[0])} – ${fmtWeek(span[span.length - 1])}`,
+      }));
       wrap.append(card);
     }
   }
@@ -941,17 +1061,23 @@ function screenUpload() {
   meta.append(edit);
   const go = el('button', 'btn');
   const reading = u?.files?.filter((f) => f.status === 'reading').length ?? 0;
-  const ready = !!u?.term && !reading;
-  go.textContent = reading ? `Reading ${u.files.length - reading} of ${u.files.length}…` : 'Generate report →';
+  const chosen = (u?.rows ?? []).filter((r) => r.include);
+  const ready = chosen.length > 0 && !reading;
+  go.textContent = reading
+    ? `Reading ${u.files.length - reading} of ${u.files.length}…`
+    : chosen.length > 1 ? `Generate ${chosen.length} reports →` : 'Generate report →';
   go.disabled = !ready;
   go.onclick = () => {
     // Guard against a double or triple click: three synchronous clicks landed
     // before the first render could swap the screen, and made three reports.
     if (state.gen || go.disabled) return;
-    if (!u?.student?.trim()) return toast('Add the student’s name first.');
+    const picked = u.rows.filter((r) => r.include);
+    if (!picked.length) return toast('Choose at least one student.');
+    if (picked.some((r) => !r.name.trim())) return toast('Every selected student needs a name.');
     go.disabled = true;
     state.screen = 'generating';
-    runGeneration(u.term, { projectId: u.projectId, keyStage: u.keyStage });
+    runBatch(picked.map((r) => ({ term: u.terms.find((t) => t.id === r.id), row: r })),
+      { projectId: u.projectId });
   };
   foot.append(meta, go);
   wrap.append(foot);
@@ -970,6 +1096,13 @@ function screenGenerating() {
   const fill = el('i');
   fill.style.width = `${Math.round(((g.at + (g.done ? 1 : 0)) / Math.max(g.steps.length, 1)) * 100)}%`;
   bar.append(fill); left.append(bar);
+  if (g.total > 1) {
+    left.append(Object.assign(el('p'), {
+      textContent: g.done ? `${g.total} of ${g.total} written`
+        : `${g.made ?? 0} of ${g.total} written${g.current ? ` · ${g.current}` : ''}`,
+      style: 'font-size:13px;color:var(--muted);margin:-16px 0 20px',
+    }));
+  }
   const steps = el('div', 'steps');
   g.steps.forEach((s, i) => {
     const done = g.done || i < g.at;
@@ -1721,22 +1854,24 @@ function recomputeUpload() {
   const good = u.files.filter((f) => f.ok);
   u.failed = u.files.filter((f) => f.error).length;
   const all = good.flatMap((f) => f.submissions);
-  if (!all.length) { u.term = null; u.multiStudent = 0; return; }
+  if (!all.length) { u.terms = []; u.rows = []; return; }
   const byId = new Map();
   for (const s of all) byId.set(s.id, s);
-  const terms = E.aggregateSubmissions([...byId.values()]);
-  u.multiStudent = terms.length > 1 ? terms.length : 0;
-  const pick = u.student
-    ? terms.find((t) => t.studentName.toLowerCase() === u.student.toLowerCase()) ?? terms[0]
-    : terms[0];
-  u.term = pick;
-  if (!u.student) u.student = pick.studentName;
+  u.terms = E.aggregateSubmissions([...byId.values()]);
+
+  // One row per detected student, carrying its own name, key stage and include flag.
+  // Keep what the user already typed when more files arrive.
+  const prev = new Map((u.rows ?? []).map((r) => [r.id, r]));
+  u.rows = u.terms.map((t) => {
+    const was = prev.get(t.id);
+    return { id: t.id, name: was?.name ?? t.studentName, keyStage: was?.keyStage ?? '', include: was?.include ?? true };
+  });
 }
 
 async function handleFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
-  state.upload ||= { files: [], student: '', keyStage: '', projectId: ensureProject(), term: null, failed: 0 };
+  state.upload ||= { files: [], terms: [], rows: [], projectId: ensureProject(), failed: 0 };
   const u = state.upload;
   if (!u.projectId || !projectOf(u.projectId)) u.projectId = ensureProject();
 
@@ -1754,7 +1889,7 @@ async function handleFiles(fileList) {
 }
 
 async function loadSample() {
-  state.upload ||= { files: [], student: '', keyStage: 'KS 4', projectId: ensureProject(), term: null, failed: 0 };
+  state.upload ||= { files: [], terms: [], rows: [], projectId: ensureProject(), failed: 0 };
   const slot = { name: 'Sample — Spring 2026 tutor forms.xlsx', size: 18000, status: 'reading', ok: false, submissions: [], error: null, detail: 'Loading sample…' };
   state.upload.files.push(slot);
   render();
@@ -1763,9 +1898,9 @@ async function loadSample() {
     status: 'done', ok: true, submissions: subs,
     detail: `${subs.length} responses · ${[...new Set(subs.map((s) => s.subject))].join(', ')}`,
   });
-  state.upload.student = 'Alex Sample';
-  state.upload.keyStage = 'KS 4';
   recomputeUpload();
+  // The sample students are all KS 4; prefill so the demo needs no typing.
+  state.upload.rows.forEach((r) => { r.keyStage ||= 'KS 4'; });
   render();
 }
 
@@ -1787,12 +1922,7 @@ function render() {
     host.append(w);
     renderDocument();
     renderPanel();
-    const r = reportOf(state.activeReport);
-    if (r?.provenance && !r._shown) {
-      r._shown = true;
-      setTimeout(() => toast(r.provenance), 300);
-    }
-    return;
+      return;
   }
   host.style.overflow = 'auto';
   host.append(
@@ -1806,6 +1936,11 @@ function render() {
 /* ================= wiring ================= */
 $('#nav-new').onclick = () => { state.upload = null; state.screen = 'upload'; render(); };
 $('#nav-tpl').onclick = () => { state.screen = 'template'; render(); };
+// Swap the placeholder glyph for a real icon now that ICON exists.
+(() => {
+  const slot = $('#nav-tpl span');
+  if (slot) { slot.replaceWith(ICON.template()); }
+})();
 $('#new-proj').onclick = () => {
   const p = { id: uid(), name: 'Untitled project' };
   state.projects.push(p);
