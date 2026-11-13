@@ -1,16 +1,49 @@
 ---
 name: smk-app-design
-description: The SMK report generator's app shell — design tokens, layout, screens, component conventions and the state model in artifact2/. Load before changing anything under artifact2/, or before adding a screen, menu or control to the app chrome.
+description: The SMK report generator's app shell — design tokens, layout, screens, the document-editing model, state and the conventions whose reasons are not obvious from the code. Load before changing anything under artifact2/, tests/, or before adding a screen, menu, control or editing behaviour.
 ---
 
 # SMK report generator — app design
 
-Source of truth: `~/Downloads/design_handoff_smk_report_generator/README.md` and its prototype.
-Where this file and that disagree, **the handoff wins** — update this file to match.
+Source of truth for the look: `~/Downloads/design_handoff_smk_report_generator/README.md`.
+Source of truth for behaviour: **this file**, which has moved on from the handoff at the
+user's direction. Where they disagree, this file wins; update it when behaviour changes.
 
-**The app chrome and the report document are two different visual worlds.** Never mix them.
-The chrome is this file. The document is `.claude/skills/smk-report-format/SKILL.md`: black on
-white, Calibri, A4, SMK letterhead. A change to one must not leak into the other.
+**The app chrome and the report document are two different visual worlds.** The chrome is
+this file. The document is `.claude/skills/smk-report-format/SKILL.md`: black on white,
+Calibri, A4, SMK letterhead. A change to one must not leak into the other.
+
+## The one principle behind the editing model
+
+**The generated report is a document, not output.** Everything a person is used to in
+Google Docs or Claude Docs should work the way they expect, and nothing an editor would show
+should appear. Concretely:
+
+- Click anywhere and type. Every piece of text — title, labels, headings, paragraphs,
+  bullets, table cells, footer — is `contenteditable`.
+- **Enter** splits the line at the caret. **Backspace** at the start of a line joins it onto
+  the one above. **Delete** at the end pulls the next line up. An empty section offers a
+  line to type in.
+- **No per-line buttons.** The `+ Paragraph` buttons and the `×` were removed because a
+  document does not have them. Do not add them back.
+- **Undo and redo** (⌘Z / ⇧⌘Z, Ctrl on Windows, and two toolbar buttons) walk a snapshot
+  history of the whole document — content, header, footer, section order and labels, logo
+  position and size. Every mutation calls `pushUndo(r)` **before** changing anything.
+- **Drag to reorder.** A grip appears at the left of subject-table rows and section rows on
+  hover. Reordering sections updates the template so later reports match.
+- **The logo is an object.** Click selects it (thin frame, bottom-right corner handle).
+  Drag moves it anywhere across the header. The corner handle resizes, 70–480px. A paperclip
+  button *below* the bottom-right corner replaces the image — placed there so it never covers
+  the logo or the handle. Clicking the logo never opens a file picker.
+- **"Ask for a change"** in the right panel rewrites the selected section to an
+  instruction, using only the tutors' words, and clears that section's reviewed tick.
+
+## The bug that shaped the editing code
+
+Selecting a section used to call `renderDocument()`, which rebuilds the DOM and replaces the
+node under the caret. Focus was lost before a keystroke landed, so the document *looked*
+read-only. `selectSection()` now toggles classes on existing nodes. **Never re-render the
+document in response to a click inside it.** Re-render only after a model change.
 
 ## Tokens — use the CSS variables, never raw hex
 
@@ -28,54 +61,82 @@ Type: **Hanken Grotesk 600** headings (−0.02em), **Instrument Sans** UI, **Jet
 Radius 6–9 controls, 10–12 cards, 14 modal and drop zone, 999 pills.
 
 Single-theme by design: a paper-document tool committed to one light world. Every colour is
-painted explicitly so the page holds on any host background. Do not add a dark palette without
-redesigning the document too.
+painted explicitly so the page holds on any host background.
 
-## Layout
+## Layout and screens
 
 `#app` is a 260px sidebar plus `minmax(0,1fr)`, full height. Main is a 56px `#topbar` over a
-scrolling `#screen`. Screens: `upload · generating · report · template · project`, dispatched
-by `state.screen` in `render()`.
+scrolling `#screen`. Screens: `upload · generating · report · template · project`,
+dispatched by `state.screen` in `render()`. The report screen takes over `#screen` with its
+own grid (document canvas + `clamp(280px,28vw,360px)` panel).
 
-The report screen is the exception: it takes over `#screen` with its own grid
-(document canvas + `clamp(280px,28vw,360px)` panel) and sets `overflow:hidden`.
+### Sidebar — as the Claude web app
+- **Projects** carry a folder icon (open/closed) and a chevron. Clicking the row expands or
+  collapses it; **Open project** is in the ⋯ menu. A new project drops straight into inline
+  rename with the name selected.
+- **Report rows are the student's name alone** — no project name, no status, no count. The
+  project is obvious from where the row sits.
+- ⋯ menus: reports get Pin · Rename · Move to project ▸ · Mark as read/unread · Archive ·
+  Delete. Projects get Open · Expand/Collapse · Pin · Rename · New report here · Archive ·
+  Delete. Destructive actions confirm, then offer undo for six seconds.
+- **Reports never land in a project nobody made.** `projectId` is null by default; projects
+  exist only when someone creates one.
+
+### Upload
+Conventional drop zone: arrow icon, "Drag files here, or browse your computer", format
+chips. Sample data is a quiet link beneath, never the main affordance. **Many students in one
+upload produce many reports** — one row each with name, key stage and an include checkbox;
+the button reads "Generate N reports". **Clicking a read file previews everything that came
+out of it**, grouped by student, with ratings as chips and comments verbatim.
+
+### Share & export
+Page picker first (all, or any subset; rows are `<div>`, not `<label>` — see below), then
+Print · Download Word · Download PDF · Email. Export is gated on every section being
+reviewed. Copy describes actions, never audiences ("Opens a draft email", not "for the
+family"). No vendor or model is named anywhere in the UI.
 
 ## Conventions that are easy to break
 
-- **`render()` rebuilds everything.** Handlers are attached fresh each time, so never cache a
-  node across renders. `renderSidebar`, `renderTop`, `renderDocument`, `renderPanel` and
-  `renderMini` can be called individually when a full rebuild would lose focus or scroll.
-- **`editable()` compares against `dataset.last`, not the value captured when the node was
-  built.** Any click blurs the focused field; comparing against a stale capture makes every
-  such blur look like an edit, which silently corrupts the undo chain. Do not "simplify" this.
-- **Long-running actions claim a synchronous lock.** `runGeneration.busy` exists because three
-  fast clicks landed before the first render and produced three reports.
-- **Undo toasts hold the slot.** `toast(msg, undo)` reserves the toast for 6s; a plain notice
-  arriving behind it is dropped rather than stealing the only route back.
-- **`localStorage` may throw** (private windows). `save()`/`load()` swallow it; the app must
-  stay usable with no persistence at all.
-- Sidebar rows use `.side-item` + `.l1`/`.l2`; the `⋯` button is `.dots` and appears on hover.
-  Menus come from `popMenu(anchor, items)` — items support `divider`, `check`, `danger` and
-  nested `items` for a submenu.
+- **`render()` rebuilds everything.** Handlers attach fresh each time; never cache a node
+  across renders. `renderSidebar`, `renderTop`, `renderDocument`, `renderPanel` and
+  `renderMini` can be called individually.
+- **`touch(r)` saves, refreshes the sidebar and the toolbar.** The toolbar shows undo/redo
+  state, so it must follow every change.
+- **`editable()` compares against `dataset.last`**, not the value captured at build. Any
+  click blurs the focused field; comparing against a stale capture made every blur look like
+  an edit, which corrupted the undo chain.
+- **A checkbox inside `<label>` toggles twice** when the label forwards the click. Page
+  picker rows are `<div>` with an explicit row click handler.
+- **A `<span>` appended to `<tr>` is discarded by the parser.** Grips go in the first cell.
+- **Long-running actions claim a synchronous lock** (`runBatch.busy`): three fast clicks
+  once produced three reports.
+- **Undo toasts hold the slot** for six seconds; a plain notice never steals them.
+- **`localStorage` may throw** (private windows). The app must work with no persistence.
+- Sample data uses unmistakable placeholder names (`Alex Sample`, `Tutor A`). A realistic
+  name in sample data can be mistaken for a real child, or coincide with one.
 
 ## State
 
 Held in `state`, persisted to `localStorage` under `smk-report-generator-v1`.
 
 - `projects[]` — `{ id, name, pinned?, archived? }`
-- `reports[]` — `{ id, projectId, student, keyStage, status: Draft|Ready|Shared, updatedAt,
-  term, blocks, flags, reviewed, history, matrix, header, footer, logo, pinned?, archived?,
-  unread?, provenance, templated }`
-- `template` — logo (+`logoPos`, `logoSize`, `logoX`, `logoY`), header/footer text, guidance,
-  `matrixHeaders`, and `sections[]` of `{ id, label, source, instr, on, pinned? }`
-- Blocks are `{ type: 'p'|'h'|'li', text }`. One array per section id.
+- `reports[]` — `{ id, projectId|null, student, keyStage, status: Draft|Ready|Shared,
+  updatedAt, term, blocks, flags, reviewed, history, chat, matrix, header, footer, logo,
+  pinned?, archived?, unread? }`
+- `template` — logo (+`logoPos`, `logoSize`, `logoX`, `logoY`), header/footer text,
+  guidance, `matrixHeaders`, `sections[]` of `{ id, label, source, instr, on, pinned? }`
+- `expandedProjects` — which folders are open
+- Blocks are `{ type: 'p'|'h'|'li', text }`, one array per section id
 
-`overview` and `table` are pinned sections: always on, always pages 1 and 2.
+Undo history is **not** persisted: a `Map` of `{ undo: [], redo: [] }` per report id,
+capped at 60 snapshots.
 
-## Rules the UI must keep
+## Testing
 
-1. **Export unlocks only when every section is marked reviewed.** Enforced in the share modal;
-   in the real build it must also be enforced server-side.
-2. **Every draft states its provenance** — a model wrote it, or the offline template did.
-3. **Sections carrying health or private detail show `CHECK · MEDICAL`** until reviewed.
-4. **Destructive actions confirm, then offer undo** for six seconds.
+`npm test` serves `artifact2/` and drives Chromium through every suite in `tests/`. The runner
+parses both modules with `--input-type=module --check` first (a plain `node --check` reads
+them as CommonJS and misses an unbalanced brace), and trusts each suite's exit code (a suite
+that crashes part-way used to be reported as passing). Suites share `tests/helpers.mjs`.
+
+Tests must **click and type like a person**, not set `textContent`. The lost-caret bug
+survived for days because every test bypassed the caret.

@@ -1377,7 +1377,7 @@ function docLogo(r) {
   const t = state.template;
   const band = el('div', 'logo-band');
   // Roughly the aspect ratio of the SMK mark, plus room for a downward nudge.
-  band.style.minHeight = `${Math.max(62, Math.round(t.logoSize * 0.42) + (t.logoY || 0) + 10)}px`;
+  band.style.minHeight = `${Math.max(62, Math.round(t.logoSize * 0.42) + Math.max(0, t.logoY || 0) + 10)}px`;
   const img = el('img', 'dlogo');
   img.src = r.logo || 'smk-logo.png';
   img.alt = 'SMK Gateway';
@@ -1438,8 +1438,8 @@ function docLogo(r) {
   attach.append(svg('<path d="M9.5 4.2 5.1 8.6a2.3 2.3 0 0 0 3.3 3.3l4.6-4.6a3.8 3.8 0 0 0-5.4-5.4L3 6.5a5.4 5.4 0 0 0 7.6 7.6l4.1-4.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'));
   attach.onclick = (e) => { e.stopPropagation(); logoTarget = 'report'; $('#logo-input').click(); };
   const placeAttach = () => {
-    attach.style.left = `${img.offsetLeft + img.offsetWidth + 6}px`;
-    attach.style.top = `${img.offsetTop}px`;
+    attach.style.left = `${img.offsetLeft + img.offsetWidth - 22}px`;
+    attach.style.top = `${img.offsetTop + img.offsetHeight + 8}px`;
   };
   band.append(attach);
   requestAnimationFrame(placeAttach);
@@ -1451,8 +1451,8 @@ function docLogo(r) {
   const place = () => {
     grip.style.left = `${img.offsetLeft + img.offsetWidth - 5}px`;
     grip.style.top = `${img.offsetTop + img.offsetHeight - 5}px`;
-    attach.style.left = `${img.offsetLeft + img.offsetWidth + 6}px`;
-    attach.style.top = `${img.offsetTop}px`;
+    attach.style.left = `${img.offsetLeft + img.offsetWidth - 22}px`;
+    attach.style.top = `${img.offsetTop + img.offsetHeight + 8}px`;
   };
   requestAnimationFrame(place);
   img.addEventListener('load', place);
@@ -1530,27 +1530,74 @@ function blockNode(r, sec, blocks, i) {
     sel.removeAllRanges(); sel.addRange(range);
   });
 
+  /** Where the caret is inside this node, in characters from the start. */
+  const caretOffset = () => {
+    const sel = getSelection();
+    if (!sel?.rangeCount || !node.contains(sel.anchorNode)) return null;
+    const range = sel.getRangeAt(0).cloneRange();
+    range.selectNodeContents(node);
+    range.setEnd(sel.anchorNode, sel.anchorOffset);
+    return { at: range.toString().length, collapsed: sel.isCollapsed };
+  };
+  const placeCaret = (idx, at) => requestAnimationFrame(() => {
+    const nodes = document.querySelectorAll(`#sec-${sec.id} .secbody [contenteditable]`);
+    const target = nodes[Math.max(0, Math.min(idx, nodes.length - 1))];
+    if (!target) return;
+    target.focus();
+    const textNode = target.firstChild;
+    const range = document.createRange();
+    if (textNode && textNode.nodeType === 3) {
+      range.setStart(textNode, Math.min(at, textNode.length));
+    } else {
+      range.selectNodeContents(target); range.collapse(true);
+    }
+    range.collapse(true);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  });
+
   node.addEventListener('keydown', (e) => {
-    // Enter starts a new line of the same kind, as in any document editor.
+    const pos = caretOffset();
+    const text = node.textContent;
+
+    // Enter splits the line at the caret, as in any document editor.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       pushUndo(r);
-      b.text = node.textContent;
+      const at = pos?.at ?? text.length;
+      b.text = text.slice(0, at);
       node.dataset.last = b.text;
-      blocks.splice(i + 1, 0, { type: b.type, text: '' });
+      blocks.splice(i + 1, 0, { type: b.type === 'h' ? 'p' : b.type, text: text.slice(at) });
       logEdit(r, sec.id, 'Added a line');
       touch(r); renderDocument(); renderPanel();
-      focusBlock(i + 1);
+      placeCaret(i + 1, 0);
       return;
     }
-    // Backspace in an empty line removes it and puts the cursor on the one above.
-    if (e.key === 'Backspace' && node.textContent === '' && blocks.length > 1) {
+
+    // Backspace at the very start joins this line onto the one above.
+    if (e.key === 'Backspace' && pos?.collapsed && pos.at === 0 && i > 0) {
       e.preventDefault();
       pushUndo(r);
+      const prev = blocks[i - 1];
+      const join = prev.text.length;
+      prev.text += text;
       blocks.splice(i, 1);
-      logEdit(r, sec.id, 'Removed a line');
+      logEdit(r, sec.id, text ? 'Joined two lines' : 'Removed a line');
       touch(r); renderDocument(); renderPanel();
-      focusBlock(i - 1);
+      placeCaret(i - 1, join);
+      return;
+    }
+
+    // Delete at the very end pulls the next line up into this one.
+    if (e.key === 'Delete' && pos?.collapsed && pos.at === text.length && i < blocks.length - 1) {
+      e.preventDefault();
+      pushUndo(r);
+      const next = blocks[i + 1];
+      b.text = text + next.text;
+      node.dataset.last = b.text;
+      blocks.splice(i + 1, 1);
+      logEdit(r, sec.id, 'Joined two lines');
+      touch(r); renderDocument(); renderPanel();
+      placeCaret(i, text.length);
     }
   });
   return node;
@@ -1564,19 +1611,6 @@ function sectionBody(r, sec) {
     const node = blockNode(r, sec, blocks, i);
     const holder = el('div', 'blk');
     holder.append(node);
-    // Remove this block. Appears on hover; the undo in the panel brings it back.
-    const del = el('button', 'blk-x', '×');
-    del.type = 'button';
-    del.title = 'Remove this line';
-    del.setAttribute('aria-label', 'Remove this line');
-    del.onclick = (e) => {
-      e.stopPropagation();
-      pushUndo(r);
-      blocks.splice(i, 1);
-      logEdit(r, sec.id, `Removed "${(b.text || '').slice(0, 36)}"`);
-      touch(r); renderDocument(); renderPanel();
-    };
-    holder.append(del);
 
     if (b.type === 'li') {
       if (!ul) { ul = el('ul'); host.append(ul); }

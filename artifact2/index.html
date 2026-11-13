@@ -315,12 +315,13 @@ label.f input:focus,label.f select:focus{outline:none;border-color:var(--accent)
 .logo-attach svg{width:13px;height:13px}
 .logo-band:hover .logo-attach,.logo-band.selected .logo-attach{opacity:1}
 .logo-attach:hover{color:var(--ink);border-color:var(--dashed)}
-.logo-band.selected .dlogo{outline:1.5px solid var(--accent);outline-offset:4px}
+/* Selected image, as Docs shows it: a thin blue frame and a square corner handle. */
+.logo-band.selected .dlogo{outline:1.5px solid var(--accent);outline-offset:0}
 .logo-band.selected .logo-grip{opacity:1}
-.logo-grip{position:absolute;width:11px;height:11px;border:1.5px solid var(--accent);
-  background:#fff;border-radius:2px;cursor:nwse-resize;touch-action:none;
-  opacity:0;transition:opacity .12s;z-index:2}
-.logo-band:hover .logo-grip,.logo-grip.dragging{opacity:1}
+.logo-grip{position:absolute;width:10px;height:10px;border:1.5px solid var(--accent);
+  background:#fff;border-radius:1px;cursor:nwse-resize;touch-action:none;
+  opacity:0;transition:opacity .12s;z-index:2;transform:translate(1px,1px)}
+.logo-grip.dragging{opacity:1}
 .dtitle{text-align:center;font-weight:700;font-size:13px}
 .dtitle div+div{margin-top:7px}
 .dmeta{margin:26px 0 30px;font-weight:700;font-size:12.5px}

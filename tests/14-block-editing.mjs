@@ -13,6 +13,12 @@ await loadSampleSingle(p); await generate(p);
 const store = () => p.evaluate(() => JSON.parse(localStorage.getItem('smk-report-generator-v1')));
 const overview = async () => (await store()).reports[0].blocks.overview;
 const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+/** Focus a line and put the caret at its end, as a click past the text would. */
+const caretEnd = (sel, idx = 0) => p.evaluate((sel, idx) => {
+  const n = document.querySelectorAll(sel)[idx]; n.focus();
+  const range = document.createRange(); range.selectNodeContents(n); range.collapse(false);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(range);
+}, sel, idx);
 
 console.log('\n=== clicking text keeps the caret (the "not editable" bug) ===');
 const box = await p.$eval('#sec-successes .secbody [contenteditable]', (n) => {
@@ -32,7 +38,7 @@ t('typing lands in the model', (await store()).reports[0].blocks.successes.some(
 console.log('\n=== no add buttons; Enter makes a line ===');
 t('the + buttons are gone', (await p.$$eval('.blk-add', (n) => n.length)) === 0);
 const n0 = (await overview()).length;
-await p.evaluate(() => { const n = document.querySelector('#sec-overview .secbody [contenteditable]'); n.focus(); });
+await caretEnd('#sec-overview .secbody [contenteditable]', 0);
 await p.keyboard.press('Enter');
 await settle();
 t(`Enter adds a line (${n0} → ${(await overview()).length})`, (await overview()).length === n0 + 1);
@@ -43,7 +49,7 @@ await settle();
 t('typed text stored', (await overview())[1].text === 'A line I added');
 
 console.log('\n=== Backspace on an empty line removes it ===');
-await p.evaluate(() => { const nodes = document.querySelectorAll('#sec-overview .secbody [contenteditable]'); nodes[1].focus(); });
+await caretEnd('#sec-overview .secbody [contenteditable]', 1);
 await p.keyboard.press('Enter');
 await settle();
 const n1 = (await overview()).length;
@@ -85,11 +91,19 @@ await settle(400);
 const order2 = await p.$$eval('.dl td.lab', (n) => n.map((x) => x.textContent.replace(/CHECK.*|✓.*/, '').trim()));
 t('undo restored the order', JSON.stringify(order2) === JSON.stringify(order0), `${order2[0]} vs ${order0[0]}`);
 
-console.log('\n=== remove × and empty-section placeholder ===');
+console.log('\n=== no × buttons; Backspace at line start joins lines ===');
+t('no remove buttons on lines', (await p.$$eval('.blk-x', (n) => n.length)) === 0);
 const n2 = (await overview()).length;
-await p.evaluate(() => document.querySelectorAll('#sec-overview .blk-x')[0].click());
+await p.evaluate(() => {
+  const nodes = document.querySelectorAll('#sec-overview .secbody [contenteditable]');
+  const n = nodes[1]; n.focus();
+  const range = document.createRange(); range.setStart(n.firstChild ?? n, 0); range.collapse(true);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+});
+await p.keyboard.press('Backspace');
 await settle();
-t(`× removes a line (${n2} → ${(await overview()).length})`, (await overview()).length === n2 - 1);
+t(`Backspace at the start joins onto the line above (${n2} → ${(await overview()).length})`, (await overview()).length === n2 - 1);
+t('joined text is intact', (await overview())[0].text.includes('A line I added'));
 await p.evaluate(() => {
   const d = JSON.parse(localStorage.getItem('smk-report-generator-v1'));
   d.reports[0].blocks.semh = [];
