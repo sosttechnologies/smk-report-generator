@@ -1,0 +1,42 @@
+# Fly.io deployment. London, because these are UK children's records and keeping them
+# in the UK is easier to explain in the DPIA than an adequacy argument about Frankfurt.
+#
+# Everything environment-specific is a secret (`fly secrets set`), never a value here —
+# this file is in the repository.
+
+app = "smk-reports"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Scale to zero between uses. SMK touch this a few times a week, and a suspended
+  # machine resumes in about a second — far cheaper than idling all month.
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 40
+
+# Chromium rendering a six-page PDF is the memory high-water mark, not page serving.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/api/health"

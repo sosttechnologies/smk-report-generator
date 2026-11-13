@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#
+# Deploy the report generator to Fly.io, London.
+#
+# Run it as often as you like: it creates whatever is missing and leaves the rest alone,
+# so the first run sets everything up and later runs just ship new code.
+#
+#   ./scripts/deploy.sh
+#
+# The one thing it cannot do for you is log in — that opens a browser:
+#   fly auth login
+set -euo pipefail
+
+APP="${FLY_APP:-smk-reports}"
+REGION="${FLY_REGION:-lhr}"
+DB="${APP}-db"
+export PATH="$HOME/.fly/bin:$PATH"
+
+say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+die() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
+
+command -v flyctl >/dev/null || die "flyctl is not installed. curl -L https://fly.io/install.sh | sh"
+flyctl auth whoami >/dev/null 2>&1 || die "Not logged in. Run:  fly auth login"
+say "Signed in to Fly as $(flyctl auth whoami 2>/dev/null)"
+
+# --- the app -----------------------------------------------------------------
+if flyctl apps list 2>/dev/null | grep -qE "^${APP}[[:space:]]"; then
+  say "App ${APP} already exists"
+else
+  say "Creating app ${APP}"
+  flyctl apps create "$APP"
+fi
+
+# --- the database ------------------------------------------------------------
+# Fly's own Postgres keeps this to one account and one bill. Attaching sets
+# DATABASE_URL on the app as a secret, which is exactly what src/lib/db.ts reads.
+if flyctl apps list 2>/dev/null | grep -qE "^${DB}[[:space:]]"; then
+  say "Database ${DB} already exists"
+else
+  say "Creating Postgres ${DB} in ${REGION}"
+  flyctl postgres create --name "$DB" --region "$REGION" \
+    --initial-cluster-size 1 --vm-size shared-cpu-1x --volume-size 1
+fi
+
+if flyctl secrets list --app "$APP" 2>/dev/null | grep -q DATABASE_URL; then
+  say "Database already attached"
+else
+  say "Attaching ${DB} to ${APP}"
+  flyctl postgres attach "$DB" --app "$APP"
+fi
+
+# --- secrets -----------------------------------------------------------------
+URL="https://${APP}.fly.dev"
+
+if flyctl secrets list --app "$APP" 2>/dev/null | grep -q AUTH_SECRET; then
+  say "AUTH_SECRET already set (leaving it alone — changing it signs everyone out)"
+else
+  say "Generating AUTH_SECRET"
+  flyctl secrets set --app "$APP" --stage "AUTH_SECRET=$(openssl rand -base64 32)"
+fi
+
+: "${ALLOWED_EMAILS:?Set ALLOWED_EMAILS first, e.g. export ALLOWED_EMAILS=\"you@example.com,@sievemkgateway.org.uk\"}"
+
+say "Setting configuration"
+flyctl secrets set --app "$APP" --stage \
+  "AUTH_URL=${URL}" \
+  "APP_URL=${URL}" \
+  "ALLOWED_EMAILS=${ALLOWED_EMAILS}" \
+  "EMAIL_FROM=${EMAIL_FROM:-SMK Reports <onboarding@resend.dev>}" \
+  "LLM_PROVIDER=${LLM_PROVIDER:-none}"
+
+# Optional. Without a key, sign-in links are written to `fly logs` instead of emailed —
+# usable for a first look, useless for real staff.
+[ -n "${RESEND_API_KEY:-}" ] && flyctl secrets set --app "$APP" --stage "RESEND_API_KEY=${RESEND_API_KEY}"
+[ -n "${OPENROUTER_API_KEY:-}" ] && flyctl secrets set --app "$APP" --stage "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}"
+[ -n "${LLM_MODEL:-}" ] && flyctl secrets set --app "$APP" --stage "LLM_MODEL=${LLM_MODEL}"
+
+# --- ship --------------------------------------------------------------------
+say "Deploying (builds remotely; migrations run as the container boots)"
+flyctl deploy --app "$APP" --remote-only
+
+say "Checking health"
+sleep 5
+curl -fsS "${URL}/api/health" | sed 's/^/  /' || echo "  (health check did not answer yet — try: fly logs --app $APP)"
+
+cat <<DONE
+
+  Live at: ${URL}
+
+  Sign in with one of: ${ALLOWED_EMAILS}
+$( [ -z "${RESEND_API_KEY:-}" ] && echo "  No RESEND_API_KEY set, so the sign-in link is in:  fly logs --app ${APP}" )
+
+  Logs:    fly logs --app ${APP}
+  Health:  ${URL}/api/health
+DONE
