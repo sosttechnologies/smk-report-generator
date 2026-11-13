@@ -51,8 +51,9 @@ t('pages are named', labels[0] === 'Overview' && labels[1] === 'Subject table', 
 const actions = await p.$$eval('.dl-tile b', (n) => n.map((x) => x.textContent));
 t('offers print, Word, PDF and email', JSON.stringify(actions), actions.join(' / '));
 t('all actions blocked before review', await p.$$eval('.dl-tile', (n) => n.every((x) => x.disabled)));
-// Word and PDF go through the download runtime, which plain Chromium does not have,
-// so they stay disabled here by design. Print and Email are the ones to check.
+// runtime.js provides downloads in any browser now, so every tile unlocks once
+// the report is reviewed. (Against this static server a PDF click would 404 at
+// /api/pdf — that path is covered by run-web.mjs with the real backend.)
 
 console.log('\n=== review, then the selection drives the output ===');
 await p.evaluate(() => [...document.querySelectorAll('.modal button')].find((x) => x.textContent === 'Close').click());
@@ -68,7 +69,7 @@ for (let i = 0; i < n; i++) {
 await p.evaluate(() => document.querySelector('.top-actions .btn').click());
 await p.waitForSelector('.modal');
 t('print and email unlock once reviewed', await p.$$eval('.dl-tile', (x) => !x[0].disabled && !x[3].disabled));
-t('downloads stay disabled without the runtime', await p.$$eval('.dl-tile', (x) => x[1].disabled && x[2].disabled));
+t('download tiles unlock too (runtime shim provides them)', await p.$$eval('.dl-tile', (x) => !x[1].disabled && !x[2].disabled));
 t('subtitle says all pages', (await p.$eval('.dl-tile span', (n) => n.textContent)).includes('all pages'));
 
 const checked = () => p.$$eval('.pagepick-row input', (n) => n.filter((x) => x.checked).length);
