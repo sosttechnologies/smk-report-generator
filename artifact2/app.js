@@ -17,13 +17,7 @@ const ATTW = { full: 'Full attendance', partial: 'Some absence', none: 'Absent',
 const initials = (n) => String(n).trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
 
 /* ================= capabilities ================= */
-let sample = null, downloads = null, hosted = 'unknown';
-(async () => {
-  const rt = await makeRuntime();
-  sample = rt.sample; downloads = rt.downloads; hosted = rt.hosted;
-  // The export tiles and the refine box read these; refresh once they are known.
-  if (state.screen === 'report') renderPanel();
-})();
+let sample = null, downloads = null, hosted = 'unknown', store = null;
 
 /* ================= template ================= */
 function defaultTemplate() {
@@ -64,8 +58,6 @@ function defaultTemplate() {
 }
 
 /* ================= state ================= */
-const LS = 'smk-report-generator-v1';
-
 const state = {
   user: { name: 'Precious Joshua', org: 'SMK Gateway' },
   projects: [], reports: [], template: defaultTemplate(),
@@ -74,26 +66,116 @@ const state = {
   selSection: null, search: '', upload: null, gen: null,
 };
 
+/* ---------------------------------------------------------------- saving --
+ * Where work is kept is the runtime's business (see runtime.js): localStorage in the
+ * artifact, the organisation's database when signed in to our server. This half only
+ * has to answer "what changed since the store last confirmed it?".
+ *
+ * It answers that by comparing each report's `updatedAt` — which `touch()` already
+ * stamps on every edit — against what came back from the last save. So none of the
+ * hundred-odd places that call save() had to change.
+ */
+const serverHas = new Map(); // report id -> JSON of the version the store confirmed
+let settingsSaved = '';
+let uiSaved = '';
+let flushTimer = null;
+let flushing = false;
+let flushAgain = false;
+
+const settingsNow = () => JSON.stringify({ projects: state.projects, template: state.template });
+/* Which folders are open is one person's view, kept locally even when signed in, so it
+ * is tracked apart from the shared settings — collapsing a folder should not push the
+ * whole template back to the server. */
+const uiNow = () => JSON.stringify(state.expandedProjects ?? {});
+
+/* Compare the whole report, not its updatedAt: archiving, pinning and marking read all
+ * change a report without stamping it, and an updatedAt check silently missed them. */
+const snap = (r) => JSON.stringify(r);
+
 function save() {
-  try {
-    localStorage.setItem(LS, JSON.stringify({
-      projects: state.projects, reports: state.reports, template: state.template,
-      user: state.user, expandedProjects: state.expandedProjects,
-    }));
-  } catch { /* private window, quota — the app still works, it just won't persist */ }
+  if (!store) return;
+  // localStorage is a synchronous few kilobytes: write it now, so a reload a moment
+  // later always has it. Only a network save is worth batching — otherwise typing
+  // would be one request per keystroke.
+  if (!store.remote) { flush(); return; }
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flush, 800);
 }
 
-function load() {
+async function flush() {
+  if (!store || flushing) { flushAgain = flushing; return; }
+
+  const current = new Map(state.reports.map((r) => [r.id, snap(r)]));
+  const dirty = state.reports.filter((r) => serverHas.get(r.id) !== current.get(r.id));
+  const deleted = [...serverHas.keys()].filter((id) => !current.has(id));
+  const settingsDirty = settingsNow() !== settingsSaved;
+  const uiDirty = uiNow() !== uiSaved;
+  if (!dirty.length && !deleted.length && !settingsDirty && !uiDirty) return;
+
+  flushing = true;
   try {
-    const raw = localStorage.getItem(LS);
-    if (!raw) return;
-    const d = JSON.parse(raw);
-    if (Array.isArray(d.projects)) state.projects = d.projects;
-    if (Array.isArray(d.reports)) state.reports = d.reports;
-    if (d.template) state.template = { ...defaultTemplate(), ...d.template };
-    if (d.user) state.user = d.user;
-    if (d.expandedProjects) state.expandedProjects = d.expandedProjects;
-  } catch { /* corrupt store: start fresh rather than crash */ }
+    const res = (await store.flush(state, {
+      dirty,
+      deleted,
+      settings: settingsDirty,
+      // The server compares this to spot someone else having saved in the meantime.
+      base: new Map(state.reports.map((r) => [r.id, r.updatedAt])),
+    })) ?? {};
+
+    for (const id of deleted) serverHas.delete(id);
+
+    if (store.remote) {
+      for (const saved of res.saved ?? []) {
+        const r = state.reports.find((x) => x.id === saved.id);
+        // Only mark it saved if it has not been edited again while we were saving.
+        if (r && snap(r) === current.get(saved.id)) {
+          r.updatedAt = saved.updatedAt;
+          serverHas.set(saved.id, snap(r));
+        }
+      }
+      for (const clash of res.conflicts ?? []) {
+        const i = state.reports.findIndex((x) => x.id === clash.id);
+        if (i >= 0 && clash.server) {
+          state.reports[i] = clash.server;
+          serverHas.set(clash.id, snap(clash.server));
+        }
+        toast('Someone else edited this report — reloaded their version');
+      }
+      if (res.conflicts?.length) render();
+    } else {
+      for (const [id, json] of current) serverHas.set(id, json);
+    }
+    settingsSaved = settingsNow();
+    uiSaved = uiNow();
+  } catch (e) {
+    // Leave everything dirty so the next save retries. Say so once rather than silently
+    // losing someone's afternoon.
+    toast(e?.message ? `Not saved — ${e.message}` : 'Not saved — will retry');
+  } finally {
+    flushing = false;
+    if (flushAgain) { flushAgain = false; save(); }
+  }
+}
+
+/** Closing the tab must not lose the last thing typed. */
+function flushNow() {
+  clearTimeout(flushTimer);
+  flush();
+}
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNow(); });
+addEventListener('beforeunload', flushNow);
+
+function applyLoaded(d) {
+  if (Array.isArray(d.projects)) state.projects = d.projects;
+  if (Array.isArray(d.reports)) state.reports = d.reports;
+  if (d.template) state.template = { ...defaultTemplate(), ...d.template };
+  if (d.user) state.user = d.user;
+  if (d.expandedProjects) state.expandedProjects = d.expandedProjects;
+  // Everything just loaded is, by definition, what the store already has.
+  serverHas.clear();
+  for (const r of state.reports) serverHas.set(r.id, snap(r));
+  settingsSaved = settingsNow();
+  uiSaved = uiNow();
 }
 
 /** Projects exist only when someone makes one. A report sits loose in Recents
@@ -2726,7 +2808,25 @@ document.addEventListener('keydown', (e) => {
   else if ((key === 'z' && e.shiftKey) || key === 'y') { e.preventDefault(); doRedo(); }
 });
 
-load();
-ensureProject();
-if (state.reports.length) { state.activeReport = state.reports[0].id; state.screen = 'report'; }
-render();
+/* ================= boot =================
+ * The store decides where work is kept, and reaching a server takes a moment, so the
+ * first paint waits for it. Rendering an empty app and then filling it in would flash
+ * "no reports yet" at someone who has fifty.
+ */
+async function boot() {
+  const rt = await makeRuntime();
+  sample = rt.sample; downloads = rt.downloads; hosted = rt.hosted; store = rt.store;
+
+  try {
+    applyLoaded(await store.load());
+  } catch (e) {
+    // A failed load must not leave a blank screen with no explanation.
+    toast(e?.message ? `Could not load your reports — ${e.message}` : 'Could not load your reports');
+  }
+
+  ensureProject();
+  if (state.reports.length) { state.activeReport = state.reports[0].id; state.screen = 'report'; }
+  render();
+}
+
+boot();

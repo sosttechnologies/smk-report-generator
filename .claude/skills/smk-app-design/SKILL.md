@@ -86,6 +86,39 @@ Next.js serves `public/app/` (generated from `artifact2/` by `scripts/sync-app.s
 `/app`. The wrapper adds `<base href="/app/">` because `/app` has no trailing slash and
 relative URLs would otherwise resolve against `/`.
 
+### The store — the same seam, for where work is kept
+
+`makeRuntime()` also returns a `store`, chosen by whether `GET /api/state` answers:
+
+| | artifact / local | signed in to our server |
+|---|---|---|
+| `store.load()` | the `localStorage` blob | the organisation's reports and settings |
+| `store.flush(state, change)` | rewrites the blob | one PUT per changed report, plus settings |
+| `store.remote` | `false` | `true` |
+
+One `flush` rather than a save-per-thing, because the two disagree about what a write is:
+localStorage rewrites everything, while the server wants a request per report so two
+people editing different students cannot overwrite each other.
+
+`app.js` keeps `serverHas`: report id → **JSON of the version the store last confirmed**.
+`save()` diffs against it and flushes the difference, so none of the ~100 call sites
+changed. Two bugs this shape caused, both fixed, both worth not repeating:
+
+- **Comparing `updatedAt` instead of the whole report.** Archiving, pinning and marking
+  read all change a report without stamping it, so those edits silently never saved.
+- **Forgetting that `expandedProjects` is also state.** Collapsing a folder was not in the
+  dirty check, so it never persisted. It is now tracked separately from the shared
+  settings, because which folders are open is one person's view, not the organisation's.
+
+`save()` writes localStorage synchronously (it is a few kilobytes, and a reload a moment
+later must have it) and debounces network saves by 800ms, with an immediate flush on
+`visibilitychange` and `beforeunload` so closing the tab never loses the last edit. A 409
+means someone else saved first: the UI replaces that report with the server's copy and
+says so.
+
+Boot is now async — `boot()` awaits the runtime and `store.load()` before the first
+`render()`, so nobody sees "no reports yet" flash before their fifty appear.
+
 ## Layout and screens
 
 `#app` is a 260px sidebar plus `minmax(0,1fr)`, full height. Main is a 56px `#topbar` over a

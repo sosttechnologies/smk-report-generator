@@ -10,6 +10,11 @@
  *   sample.limits()            → GET  /api/llm       → { images }
  *   downloads.save({filename, data}) → a real browser download
  *
+ * It also decides WHERE WORK IS KEPT. In the artifact that is localStorage, which is
+ * per-browser and invisible to colleagues. On our own backend, signed in, it is the
+ * organisation's database — so a report drafted on one machine is there for the next
+ * person on theirs.
+ *
  * app.js does not know which it is running on. That is the point.
  */
 
@@ -53,6 +58,138 @@ function extractJson(text) {
   catch { const e = new Error('The reply was not valid JSON'); e.code = 'invalid_json'; e.text = text; throw e; }
 }
 
+/* ---------------------------------------------------------------- storage --
+ * Two implementations of the same two calls:
+ *
+ *   store.load()          → { reports, projects, template, user }
+ *   store.flush(state, c) → persist what changed; c = { dirty, deleted, settings, base }
+ *
+ * One flush method rather than a save-per-thing, because the two backends disagree
+ * about what a write even is: localStorage rewrites the whole blob, while the server
+ * wants one request per report so that two people editing different students do not
+ * overwrite each other. app.js says what changed and lets the store decide.
+ *
+ * `remote` tells app.js whether a write costs a network round trip, so it can debounce.
+ * It does not tell it which backend is behind it.
+ */
+
+const LS_KEY = 'smk-report-generator-v1';
+
+function localStore() {
+  return {
+    remote: false,
+    async load() {
+      let d = {};
+      try {
+        d = JSON.parse(localStorage.getItem(LS_KEY) ?? '{}') ?? {};
+      } catch { /* corrupt store: start fresh rather than refuse to open */ }
+      return {
+        reports: Array.isArray(d.reports) ? d.reports : [],
+        projects: Array.isArray(d.projects) ? d.projects : [],
+        template: d.template ?? null,
+        user: d.user ?? null,
+        expandedProjects: d.expandedProjects ?? {},
+      };
+    },
+    async flush(state) {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          reports: state.reports,
+          projects: state.projects,
+          template: state.template,
+          user: state.user,
+          expandedProjects: state.expandedProjects,
+        }));
+      } catch { /* private window or quota: the app works, it just will not persist */ }
+      return { saved: [] };
+    },
+  };
+}
+
+function remoteStore(firstPayload) {
+  let primed = firstPayload;
+
+  const send = async (url, init) => {
+    const res = await fetch(url, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    });
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error('Someone else edited this report');
+      err.code = 'conflict';
+      err.report = body.report;
+      throw err;
+    }
+    if (!res.ok) throw new Error(`Could not save (${res.status})`);
+    return res.json().catch(() => ({}));
+  };
+
+  return {
+    remote: true,
+
+    async load() {
+      // makeRuntime already fetched this to decide which store to use; a second round
+      // trip for the same answer would only delay first paint.
+      let d = primed;
+      primed = null;
+      if (!d) {
+        const res = await fetch(`${API}/state`);
+        if (!res.ok) throw new Error(`Could not load your reports (${res.status})`);
+        d = await res.json();
+      }
+      let expandedProjects = {};
+      try {
+        // Which folders are open is this person's own view, not the organisation's.
+        expandedProjects = JSON.parse(localStorage.getItem(`${LS_KEY}:ui`) ?? '{}') ?? {};
+      } catch { /* not important enough to fail over */ }
+      return {
+        reports: d.reports ?? [],
+        projects: d.projects ?? [],
+        template: d.template ?? null,
+        user: d.user?.email ? { name: d.user.email, org: 'SMK Gateway' } : null,
+        expandedProjects,
+      };
+    },
+
+    async flush(state, change) {
+      const saved = [];
+      const conflicts = [];
+
+      for (const id of change.deleted ?? []) {
+        await send(`${API}/reports/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      }
+
+      for (const report of change.dirty ?? []) {
+        try {
+          const out = await send(`${API}/reports/${encodeURIComponent(report.id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ report, baseUpdatedAt: change.base?.get(report.id) ?? null }),
+          });
+          if (out.report) saved.push(out.report);
+        } catch (e) {
+          // One report losing a race must not stop the others being saved.
+          if (e.code === 'conflict') conflicts.push({ id: report.id, server: e.report });
+          else throw e;
+        }
+      }
+
+      if (change.settings) {
+        await send(`${API}/settings`, {
+          method: 'PUT',
+          body: JSON.stringify({ projects: state.projects, template: state.template }),
+        });
+      }
+
+      try {
+        localStorage.setItem(`${LS_KEY}:ui`, JSON.stringify(state.expandedProjects ?? {}));
+      } catch { /* see above */ }
+
+      return { saved, conflicts };
+    },
+  };
+}
+
 export async function makeRuntime() {
   // Real host present: use it, unchanged.
   if (window.claude?.use) {
@@ -73,12 +210,21 @@ export async function makeRuntime() {
         return hostDownloads.save({ filename, data });
       },
     };
-    return { sample, downloads, hosted: 'claude' };
+    return { sample, downloads, store: localStore(), hosted: 'claude' };
   }
 
   // Our own backend. Ask it what it can do before promising anything.
   let info = { available: false, images: false, provider: 'none', model: '' };
   try { info = await (await fetch(`${API}/llm`)).json(); } catch { /* backend absent */ }
+
+  // Signed in to a server that keeps state? Then work is shared. /api/state answers
+  // 401 when there is no session, which is also the case in local single-user mode,
+  // and fails outright when there is no backend at all — both mean localStorage.
+  let store = localStore();
+  try {
+    const res = await fetch(`${API}/state`);
+    if (res.ok) store = remoteStore(await res.json());
+  } catch { /* no backend: localStorage it is */ }
 
   const sample = info.available
     ? Object.assign(
@@ -115,5 +261,5 @@ export async function makeRuntime() {
     },
   };
 
-  return { sample, downloads, hosted: 'self', info };
+  return { sample, downloads, store, hosted: 'self', info };
 }
