@@ -20,7 +20,10 @@ export default defineConfig({
     path: 'prisma/migrations',
   },
   datasource: {
-    url: process.env.DATABASE_URL ?? '',
+    // Migrations need a DIRECT connection. Neon's DATABASE_URL is the pooled
+    // (pgbouncer) endpoint, which cannot run the DDL a migration issues, so prefer the
+    // unpooled one when it exists. The running app keeps using the pooled URL.
+    url: process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || '',
     shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });

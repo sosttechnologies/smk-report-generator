@@ -21,3 +21,4 @@ public/app/
 
 # Local Prisma dev server state
 /.prisma-dev/
+.neon
