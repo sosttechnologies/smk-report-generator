@@ -246,5 +246,5 @@ who answered but not who was expected to.
   these into the setup panel per report. Adding them to the Form would remove that step.
 - The term label is guessed from the dates and uses standard UK terms, but SIEVEMK's own
   sample calls 4 May – 11 June *"Spring Term"*. Staff can edit it; confirm their convention.
-- `public/smk-logo.svg` is a **placeholder**. Get the real asset.
+
 - Attendance comes from the weekly form, not a register.

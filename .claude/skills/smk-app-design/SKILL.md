@@ -63,6 +63,29 @@ Radius 6–9 controls, 10–12 cards, 14 modal and drop zone, 999 pills.
 Single-theme by design: a paper-document tool committed to one light world. Every colour is
 painted explicitly so the page holds on any host background.
 
+### The logo
+
+`artifact2/smk-logo.png` — SMK Gateway's current wordmark, **white on navy**, 900×265
+(about 3.4:1), supplied by SIEVEMK in November 2026. It is the default in three places:
+the sidebar header, the top of every report, and the template editor's preview
+(`r.logo || 'smk-logo.png'`). Staff can replace it per template through the attach icon,
+which stores a data URL in `template.logo`; the file is only the fallback.
+
+Two things it is easy to break, both learned by breaking them:
+
+- **The navy block is part of the logo, so no `mix-blend-mode`.** Multiply used to be set
+  on every logo image to drop the *old* mark's white background. Against this one it
+  tinted the white lettering to whatever sat behind — cream in the sidebar, white on the
+  page. Removed everywhere. A logo that needs its background dropping should arrive as a
+  transparent PNG instead.
+- **The logo band reserves height from the aspect ratio**, `logoSize * 0.3` in `docLogo()`.
+  That figure tracks *this* logo's proportions. It was `0.42` for the old 2.4:1 mark and
+  left a visible gap above "INTERIM TERMLY REPORT" once the wider wordmark went in. Change
+  the logo, check that number.
+
+The report document stays black on white otherwise — the navy is the brand mark alone, not
+licence to colour the page.
+
 ## Where it runs — the runtime seam
 
 The same `app.js` runs in two places and must not know which:
