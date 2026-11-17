@@ -75,7 +75,12 @@ const state = {
  * stamps on every edit — against what came back from the last save. So none of the
  * hundred-odd places that call save() had to change.
  */
-const serverHas = new Map(); // report id -> JSON of the version the store confirmed
+const serverHas = new Map();   // report id -> JSON of the version the store confirmed
+/* The updatedAt the SERVER holds, which is not the same as the report's own updatedAt:
+ * touch() stamps a new one the moment anything is edited. Sending that as "the version
+ * I started from" made the server compare a brand-new timestamp against the older one
+ * it held and call every ordinary edit a conflict. */
+const serverStamp = new Map(); // report id -> updatedAt as the store last confirmed it
 let settingsSaved = '';
 let uiSaved = '';
 let flushTimer = null;
@@ -118,8 +123,9 @@ async function flush() {
       dirty,
       deleted,
       settings: settingsDirty,
-      // The server compares this to spot someone else having saved in the meantime.
-      base: new Map(state.reports.map((r) => [r.id, r.updatedAt])),
+      // What the server last told us it had. Anything else means someone really did
+      // save in between — not merely that we have edited since.
+      base: new Map(serverStamp),
     })) ?? {};
 
     for (const id of deleted) serverHas.delete(id);
@@ -128,22 +134,27 @@ async function flush() {
       for (const saved of res.saved ?? []) {
         const r = state.reports.find((x) => x.id === saved.id);
         // Only mark it saved if it has not been edited again while we were saving.
+        serverStamp.set(saved.id, saved.updatedAt);
+        // Only mark it clean if it has not been edited again while we were saving.
         if (r && snap(r) === current.get(saved.id)) {
           r.updatedAt = saved.updatedAt;
           serverHas.set(saved.id, snap(r));
         }
       }
       for (const clash of res.conflicts ?? []) {
-        const i = state.reports.findIndex((x) => x.id === clash.id);
-        if (i >= 0 && clash.server) {
-          state.reports[i] = clash.server;
-          serverHas.set(clash.id, snap(clash.server));
-        }
-        toast('Someone else edited this report — reloaded their version');
+        // Keep what is in front of the person typing. Replacing it with someone else's
+        // copy would throw away the paragraph they just wrote, and at SMK's size two
+        // people on the same report at the same moment is rare. Adopting the server's
+        // stamp lets the next flush save over it, so the edit is never stuck.
+        if (clash.server) serverStamp.set(clash.id, clash.server.updatedAt);
+        serverHas.delete(clash.id); // still dirty: save it again with the right base
+        toast('Someone else had this report open — your version has been kept');
       }
-      if (res.conflicts?.length) render();
+      // Something was left dirty on purpose, so come straight back for it.
+      if (res.conflicts?.length) save();
     } else {
       for (const [id, json] of current) serverHas.set(id, json);
+      for (const r of state.reports) serverStamp.set(r.id, r.updatedAt);
     }
     settingsSaved = settingsNow();
     uiSaved = uiNow();
@@ -173,7 +184,8 @@ function applyLoaded(d) {
   if (d.expandedProjects) state.expandedProjects = d.expandedProjects;
   // Everything just loaded is, by definition, what the store already has.
   serverHas.clear();
-  for (const r of state.reports) serverHas.set(r.id, snap(r));
+  serverStamp.clear();
+  for (const r of state.reports) { serverHas.set(r.id, snap(r)); serverStamp.set(r.id, r.updatedAt); }
   settingsSaved = settingsNow();
   uiSaved = uiNow();
 }

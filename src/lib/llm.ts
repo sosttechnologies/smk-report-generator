@@ -44,22 +44,36 @@ export function provider(): Provider {
 }
 
 /*
- * Defaults are chosen for cost, because SMK pay this bill every term.
+ * Chosen by measurement, not by price list — see `node scripts/eval-models.mjs`, which
+ * runs the real prompt over invented data and scores groundedness, British spelling,
+ * completeness and honest "nothing recorded" handling.
  *
- * The job is turning tutors' own words into tidy British prose — not reasoning. An
- * open-weight 70B does it for roughly 1-2% of a frontier model's price: a report is
- * ~4k tokens in and ~2k out, so pennies per term rather than pounds. Override with
- * LLM_MODEL if the writing is not good enough; the cheapest option of all is
- * LLM_PROVIDER=none, which costs nothing and still produces a full report from the
+ * What that found, over repeated runs:
+ *   gpt-4o-mini        4/4 clean, tight output length, ~10s          $0.0007/report
+ *   mistral-small-24b  3/4 clean — once silently dropped half the
+ *                      report's sections — erratic length, 25-36s    $0.0002/report
+ *   llama-3.3-70b      invented a number in the attendance section,
+ *                      clumsiest prose                               $0.0006/report
+ *   qwen-2.5-72b       clean but slow                                $0.0009/report
+ *   deepseek-chat      clean, dearest of the group                   $0.0011/report
+ *
+ * At SMK's volume (~300 reports and ~900 rewrites a year) the whole spread is under
+ * £1/year, so reliability decides, not cost. A model that sometimes omits sections
+ * would hand a half-empty report to a member of staff with no error to warn them.
+ *
+ * LLM_PROVIDER=none remains free and still produces a complete report from the
  * deterministic template.
  */
 const DEFAULT_MODEL: Record<Provider, string> = {
   anthropic: 'claude-haiku-4-5-20251001',
-  openrouter: 'meta-llama/llama-3.3-70b-instruct',
+  openrouter: 'openai/gpt-4o-mini',
   openai: 'gpt-4o-mini',
   ollama: 'llama3.3:70b',
   none: 'template',
 };
+
+/** If the chosen model's providers are all down, try these rather than fail a report. */
+const OPENROUTER_FALLBACKS = ['qwen/qwen-2.5-72b-instruct', 'deepseek/deepseek-chat'];
 
 export function model(): string {
   return process.env.LLM_MODEL || DEFAULT_MODEL[provider()];
@@ -148,9 +162,12 @@ export async function complete(req: CompletionRequest): Promise<CompletionResult
   };
   if (req.json) body.response_format = { type: 'json_object' };
   if (p === 'openrouter') {
-    // Many providers host the same open-weight model at different prices; take the
-    // cheapest that can serve the request.
+    // Many providers host the same model at different prices; take the cheapest that
+    // can serve the request.
     body.provider = { sort: 'price' };
+    // A provider outage mid-term should not stop staff producing reports. Only applies
+    // when the model is the default — someone who set LLM_MODEL explicitly meant it.
+    if (!process.env.LLM_MODEL) body.models = [m, ...OPENROUTER_FALLBACKS];
   }
 
   const headers: Record<string, string> = {

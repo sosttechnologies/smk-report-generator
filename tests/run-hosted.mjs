@@ -28,10 +28,30 @@ for (const file of ['.env.local', '.env']) {
   }
 }
 
-if (!process.env.DATABASE_URL) {
-  console.log('• skipped: no DATABASE_URL. Start one with `npx prisma dev`, then rerun.');
+// This suite DELETES every session and verification token as part of its setup. Run it
+// against production and everyone is signed out — so it refuses anything that is not
+// plainly a local database, unless TEST_DATABASE_URL says otherwise on purpose.
+const TEST_DB = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(TEST_DB ?? '');
+
+if (!TEST_DB) {
+  console.log('• skipped: no database. Start one with `npm run db`, then rerun.');
   process.exit(0);
 }
+if (!isLocal) {
+  console.error('✗ refusing to run: DATABASE_URL is not a local database.');
+  console.error('  This suite deletes all sessions and users — against production that');
+  console.error('  signs out every member of staff.');
+  console.error('');
+  console.error('  Start a local one:   npm run db');
+  console.error('  Then:                TEST_DATABASE_URL="postgres://…localhost…" npm run test:hosted');
+  process.exit(1);
+}
+// Both, and set rather than deleted: prisma.config.ts loads .env.local itself, and
+// dotenv fills in anything NOT already in the environment — so a deleted variable comes
+// straight back pointing at production.
+process.env.DATABASE_URL = TEST_DB;
+process.env.DATABASE_URL_UNPOOLED = TEST_DB;
 
 function run(cmd, args, env = {}) {
   return new Promise((resolve, reject) => {
@@ -78,6 +98,9 @@ await run(process.execPath, ['-e', `
   const { PrismaClient } = require('@prisma/client');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   (async () => {
+    await db.auditEvent.deleteMany({});
+    await db.report.deleteMany({});   // or the app opens on an old report, not the upload screen
+    await db.settings.deleteMany({});
     await db.session.deleteMany({});
     await db.verificationToken.deleteMany({});
     await db.user.deleteMany({ where: { email: { in: ['${ALLOWED}', 'stranger@example.com'] } } });

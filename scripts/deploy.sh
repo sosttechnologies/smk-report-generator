@@ -86,8 +86,15 @@ flyctl secrets set --app "$APP" --stage \
 if [ -n "${OPENROUTER_API_KEY:-}" ]; then
   flyctl secrets set --app "$APP" --stage \
     "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}" \
-    "LLM_PROVIDER=openrouter" \
-    "LLM_MODEL=${LLM_MODEL:-meta-llama/llama-3.3-70b-instruct}"
+    "LLM_PROVIDER=openrouter"
+  # Deliberately does NOT pin LLM_MODEL. The default lives in src/lib/llm.ts, chosen by
+  # measurement (scripts/eval-models.mjs), and leaving it unset is what enables the
+  # provider fallbacks. Pinning it here once silently overrode that on every deploy.
+  if [ -n "${LLM_MODEL:-}" ]; then
+    flyctl secrets set --app "$APP" --stage "LLM_MODEL=${LLM_MODEL}"
+  else
+    flyctl secrets unset --app "$APP" LLM_MODEL >/dev/null 2>&1 || true
+  fi
 else
   say "No OPENROUTER_API_KEY: reports come from the deterministic template and the"
   say "rewrite box will be disabled. Add one later with \`fly secrets set\`."

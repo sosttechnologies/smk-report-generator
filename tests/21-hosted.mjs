@@ -100,6 +100,61 @@ let usedLink;
   await ctx.close();
 }
 
+console.log('\n=== editing a report saves cleanly, with no false conflict ===');
+{
+  // The bug this guards against: touch() stamps a new updatedAt the moment anything is
+  // edited, and that stamp was being sent to the server as "the version I started
+  // from". The server compared it with the older one it held and called EVERY ordinary
+  // edit a conflict, so staff saw "someone else edited this report" on their own work.
+  const ctx = await b.createBrowserContext();
+  const p = await ctx.newPage();
+  const link = await requestLink(p, ALLOWED);
+  if (!link) {
+    t('could sign in to test editing', false);
+  } else {
+    await p.goto(link, { waitUntil: 'domcontentloaded' });
+    await p.waitForSelector('#sidebar', { timeout: 30000 });
+
+    // Signing in lands on a report if the organisation already has one; get to the
+    // upload screen either way.
+    if (!(await p.$('.linkish'))) {
+      await p.evaluate(() => document.querySelector('#nav-new')?.click());
+      await p.waitForSelector('.linkish', { timeout: 15000 });
+    }
+    await p.evaluate(() => document.querySelector('.linkish').click());
+    await p.waitForFunction(() => document.querySelector('.frow .st')?.textContent.includes('Read'), { timeout: 40000 });
+    await p.click('.sticky-foot .btn');
+    await p.waitForFunction(() => document.querySelectorAll('#docscroll .sheet').length > 0, { timeout: 120000 });
+    await new Promise((r) => setTimeout(r, 2500));
+    t('a report was generated while signed in', true);
+
+    const conflictSeen = async () =>
+      (await p.$eval('#toast', (n) => (n.hidden ? '' : n.textContent)).catch(() => '')).includes('Someone else');
+
+    // Three edits in a row, each one a separate save to the server.
+    for (let i = 1; i <= 3; i++) {
+      await p.evaluate((n) => {
+        const el = document.querySelector('#docscroll [contenteditable]');
+        el.focus();
+        el.textContent = `Edited by the test, pass ${n}.`;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.blur();
+      }, i);
+      await new Promise((r) => setTimeout(r, 1400)); // past the 800ms debounce
+      t(`edit ${i} saved without a conflict message`, !(await conflictSeen()));
+    }
+
+    // And it really reached the server: reload and the text is still there.
+    await p.goto(APP + '/app', { waitUntil: 'domcontentloaded' });
+    await p.waitForSelector('#docscroll [contenteditable]', { timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    const kept = await p.evaluate(() => document.querySelector('#docscroll').textContent);
+    t('the edit survived a reload, so it reached the database', kept.includes('pass 3'),
+      kept.slice(0, 80));
+  }
+  await ctx.close();
+}
+
 console.log('\n=== a sign-in link is single use ===');
 if (usedLink) {
   // A separate browser profile: no cookies, so this tests the token, not the session.

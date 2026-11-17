@@ -84,7 +84,7 @@ export default async function SignInPage({
         )}
 
         <p style={S.footer}>
-          This system holds information about children. Do not share your sign-in link.
+          Your sign-in link is personal to you. Please do not share it.
         </p>
       </div>
     </main>
