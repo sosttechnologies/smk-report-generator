@@ -1511,8 +1511,9 @@ function docFooter(r) {
 function docLogo(r) {
   const t = state.template;
   const band = el('div', 'logo-band');
-  // Roughly the aspect ratio of the SMK mark, plus room for a downward nudge.
-  band.style.minHeight = `${Math.max(62, Math.round(t.logoSize * 0.42) + Math.max(0, t.logoY || 0) + 10)}px`;
+  // The SMK Gateway wordmark is about 3.4:1, so its height is ~0.3 of its width;
+  // plus room for a downward nudge. Too tall a band leaves a gap above the title.
+  band.style.minHeight = `${Math.max(44, Math.round(t.logoSize * 0.3) + Math.max(0, t.logoY || 0) + 10)}px`;
   const img = el('img', 'dlogo');
   img.src = r.logo || 'smk-logo.png';
   img.alt = 'SMK Gateway';
@@ -2204,7 +2205,7 @@ function screenTemplate() {
   const logoRow = el('div');
   logoRow.style.cssText = 'display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap';
   const lp = el('img'); lp.src = t.logo || 'smk-logo.png'; lp.alt = 'Logo';
-  lp.style.cssText = `width:${Math.round(t.logoSize * 0.34)}px;height:auto;mix-blend-mode:multiply`;
+  lp.style.cssText = `width:${Math.round(t.logoSize * 0.34)}px;height:auto`;
   const rep = el('button', 'btn-2', 'Replace logo');
   rep.onclick = () => { logoTarget = 'template'; $('#logo-input').click(); };
   const rst = el('button', 'btn-ghost', 'Reset');
