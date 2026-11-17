@@ -7,16 +7,25 @@ Tutors submit a **weekly** Microsoft Form per student, per subject. Staff curren
 those responses by hand into a ~6-page "Interim Termly Report". This tool reads the
 submissions, drafts every section, lets staff edit, and exports the letterhead PDF.
 
-## Three hard rules
+## Four hard rules
 
-1. **Nothing exports without a human clicking Approve.** These are reports about children,
+1. **Never spend Joshua's money without asking.** Name the exact resource and its price,
+   and get a yes, before creating anything that bills — hosting, database, domain, API
+   plan. Approving a plan that mentions a budget range is **not** permission for a
+   particular resource. Check the price as part of *choosing*, not after provisioning.
+   This exists because `fly mpg create --plan Basic` was assumed cheap and turned out to be
+   **$38/month**; it was destroyed within the hour. `scripts/deploy.sh` now refuses to
+   create a database at any price and takes a `DATABASE_URL` instead. Free tiers are the
+   default: Neon for Postgres, Resend for email, and a cheap open-weight model that costs
+   pennies a term.
+2. **Nothing exports without a human clicking Approve.** These are reports about children,
    read by their families. The `approved` state gates export; "Edit again" clears it.
-2. **A half-filled form still produces a report.** Only the student's name is required.
+3. **A half-filled form still produces a report.** Only the student's name is required.
    Every other blank — subject, week, attendance, ratings, comments — gets a *stated*
    default (`General`, the submission date or current week, "not recorded") that is listed
    in the file preview, and the document says what was not recorded rather than inventing a
    grade or a sentence. Never skip a row, and never guess an attendance or a rating.
-3. **No real student data in this repository.** Everything in `sample-data/` is invented.
+4. **No real student data in this repository.** Everything in `sample-data/` is invented.
    Never commit a real SIEVEMK Forms export, PDF or screenshot containing a real child's
    name, comments or circumstances. The UK GDPR position on sending children's data to an
    LLM has **not** been settled with SIEVEMK — that must happen before this handles real data.
@@ -158,6 +167,8 @@ STUDENT ENGAGEMENT grid, an ACADEMICS grid, concerns, key actions, general comme
 See `.claude/skills/smk-form-schema/SKILL.md`.
 
 App shell, tokens and state model: `.claude/skills/smk-app-design/SKILL.md`.
+How to work on this, and the mistakes already paid for:
+`.claude/skills/smk-working-practices/SKILL.md`.
 
 **Output** — one report per student per term: an overview page, an 8-column subject matrix,
 then eight label/body sections. See `.claude/skills/smk-report-format/SKILL.md`.
@@ -228,13 +239,6 @@ who answered but not who was expected to.
 4. **Two front ends.** `artifact2/` is published both as a claude.ai artifact and served by
    Next. Every change needs publishing and testing twice. Once hosting is live the artifact
    should be frozen as a demo.
-
-## Spending
-
-**Never create a paid resource without naming it and its price and getting a yes.** A
-`fly mpg create --plan Basic` was assumed cheap and turned out to be **$38/month**; it was
-destroyed. Intended shape: Fly app (London, suspends to zero, ~£0–4/month), Neon free-tier
-Postgres (£0), Resend free tier (£0).
 
 ## Known gaps to raise with SIEVEMK
 
