@@ -12,6 +12,9 @@ import { authDisabled } from '@/lib/authMode';
 import { db } from '@/lib/db';
 import { model, provider } from '@/lib/llm';
 
+// Reads the database on every call, so it must never be collected at build time.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const checks: Record<string, unknown> = {};
 

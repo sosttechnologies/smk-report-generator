@@ -10,6 +10,9 @@ import { db } from '@/lib/db';
 import { toClient } from '@/lib/reportShape';
 import { caller } from '@/lib/session';
 
+// Reads the database on every call, so it must never be collected at build time.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   const who = await caller();
   if (!who) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
